@@ -80,6 +80,8 @@ for group in DATA['group']:
 # Extract sample names
 SAMPLES_TYPE = list(DATA['sample_type'].unique())
 
+INPUTS = [input for input in SAMPLES_TYPE if input.endswith('input')]
+
 THREADS = 1
 
 wildcard_constraints:
@@ -93,7 +95,8 @@ wildcard_constraints:
 
 rule all:
     input:
-        ['qc/multiqc', 'qc/multibamqc', f'genome/{BUILD}.fa.gz.fai']
+        ['qc/multiqc', 'qc/multibamqc', f'genome/{BUILD}.fa.gz.fai',
+         'mapped/all-input.sort.bam']
 
 rule bgzip_genome:
     input:
@@ -257,13 +260,13 @@ rule hisat2_map:
     shell:
         hisat2_cmd
 
-rule samtools_sort:
+rule sortBAM:
     input:
         rules.hisat2_map.output.bam
     output:
         'mapped/{sample_type}.sort.bam',
     log:
-        'logs/samtools_sort/{sample_type}.log'
+        'logs/sortBAM/{sample_type}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
@@ -271,13 +274,13 @@ rule samtools_sort:
     shell:
         'samtools sort -@ 6 {input} > {output} 2> {log}'
 
-rule index_bam:
+rule indexBAM:
     input:
-        rules.samtools_sort.output
+        rules.sortBAM.output
     output:
-        f'{rules.samtools_sort.output}.bai'
+        f'{rules.sortBAM.output}.bai'
     log:
-        'logs/index_bam/{sample_type}.log'
+        'logs/indexBAM/{sample_type}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
@@ -285,44 +288,50 @@ rule index_bam:
     shell:
         'samtools index -@ 6 {input} &> {log}'
 
-rule samtools_stats:
+rule mergeInput:
     input:
-        rules.samtools_sort.output
+        expand('mapped/{sample}.sort.bam',sample=INPUTS)
+    output:
+        'mapped/all-input.sort.bam'
+    log:
+        'logs/mergeInput.log'
+    conda:
+        f'{ENVS}/samtools.yaml'
+    shell:
+        'samtools merge {output} {input} &> {log}'
+
+rule samtoolsStats:
+    input:
+        rules.sortBAM.output
     output:
         'qc/samtools/stats/{sample_type}.stats.txt'
-    group:
-        'SAM_QC'
     log:
-        'logs/samtools_stats/{sample_type}.log'
+        'logs/samtoolsStats/{sample_type}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
         'samtools stats {input} > {output} 2> {log}'
 
-rule samtools_idxstats:
+rule samtoolsIdxstats:
     input:
-        bam = rules.samtools_sort.output,
-        index = rules.index_bam.output
+        bam = rules.sortBAM.output,
+        index = rules.indexBAM.output
     output:
         'qc/samtools/idxstats/{sample_type}.idxstats.txt'
-    group:
-        'SAM_QC'
     log:
-        'logs/samtools_idxstats/{sample_type}.log'
+        'logs/samtoolsIdxstats/{sample_type}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
         'samtools idxstats {input.bam} > {output} 2> {log}'
 
-rule samtools_flagstat:
+rule samtoolsFlagstat:
     input:
-        rules.samtools_sort.output
+        rules.sortBAM.output
     output:
         'qc/samtools/flagstat/{sample_type}.flagstat.txt'
-    group:
-        'SAM_QC'
     log:
-        'logs/samtools_flagstat/{sample_type}.log'
+        'logs/samtoolsFlagstat/{sample_type}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
@@ -330,7 +339,7 @@ rule samtools_flagstat:
 
 rule bamqc:
     input:
-        bam = rules.samtools_sort.output
+        bam = rules.sortBAM.output
     output:
         directory('qc/bamqc/{sample_type}')
     resources:
@@ -376,7 +385,7 @@ rule multibamqc:
             '--data {input} -outdir {output} '
         '&> {log}'
 
-rule multiqc:
+rule multiQC:
     input:
         expand('qc/fastqc/{single}.raw_fastqc.zip',
             single =  DATA['single']),
