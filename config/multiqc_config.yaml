@@ -16,6 +16,9 @@ module_order:
     - qualimap
     - samtools
     - featureCounts
+    - macs2
+
+log_filesize_limit: 100000000
 
 extra_fn_clean_exts:
     - '.'

@@ -1,3 +1,4 @@
+import tempfile
 import pandas as pd
 
 BASE = workflow.basedir
@@ -43,12 +44,11 @@ if seq_type == "pe":
             '-o {output.trimmed[0]} -p {output.trimmed[1]} '
             '{input} > {output.qc} '
         '2> {log}')
-    hisat2_cmd = ('(hisat2 '
-            '-x {params.index} -p 6 '
-            '-1 {input.reads_in[0]} -2 {input.reads_in[1]} '
-            '--summary-file {output.qc} '
-        '| samtools view -b > {output.bam}) '
-        '2> {log}')
+    bowtie2_cmd = (
+      'bowtie2 '
+        '-x {params.index} -1 {input.reads_in[0]} -2 {input.reads_in[1]} '
+        '--threads {threads} --reorder --very-sensitive '
+        '> {output.sam} 2> {log}; cp {log} {output.qc}')
 else:
     single_regex = '[^\/\s.-]+-\d+-(input|bound)'
     DATA['single'] = (DATA[['group', 'rep', 'type']]
@@ -59,12 +59,11 @@ else:
             '{params.others} --cores {THREADS} '
             '-o {output.trimmed[0]} {input} > {output.qc} '
         '2> {log}')
-    hisat2_cmd = ('(hisat2 '
-            '-x {params.index} -p 6 '
-            '-U {input.reads_in[0]} '
-            '--summary-file {output.qc} '
-        '| samtools view -b > {output.bam}) '
-        '2> {log}')
+    bowtie2_cmd = (
+      'bowtie2 '
+        '-x {params.index} -U {input.reads_in[0]} --threads {threads} '
+        '--reorder --very-sensitive '
+        '> {output.sam} 2> {log}; cp {log} {output.qc}')
 
 # Define single and sample names from definitions.
 DATA['sample_type'] = (DATA[['group', 'rep', 'type']]
@@ -77,10 +76,14 @@ DATA = DATA.set_index(['group', 'sample', 'sample_type', 'single'], drop = False
 GROUPS = {}
 for group in DATA['group']:
     GROUPS[group] = list(DATA.loc[group]['rep'].unique())
-# Extract sample names
-SAMPLES_TYPE = list(DATA['sample_type'].unique())
 
-INPUTS = [input for input in SAMPLES_TYPE if input.endswith('input')]
+# Get group-rep-type for all samples
+SAMPLES_TYPE = list(DATA['sample_type'].unique())
+# Get group-rep for input samples
+INPUTS = [input[:-6] for input in SAMPLES_TYPE if input.endswith('input')]
+# Get group-rep for bound sample
+BOUNDS = [bound[:-6] for bound in SAMPLES_TYPE if bound.endswith('bound')]
+
 
 THREADS = 1
 
@@ -96,9 +99,9 @@ wildcard_constraints:
 rule all:
     input:
         ['qc/multiqc', 'qc/multibamqc', f'genome/{BUILD}.fa.gz.fai',
-         'mapped/all-input.sort.bam']
+         expand('macs2/{sample}/{sample}_summits.bed', sample=BOUNDS)]
 
-rule bgzip_genome:
+rule bgzipGenome:
     input:
         GENOME
     output:
@@ -112,9 +115,9 @@ rule bgzip_genome:
 
 rule faidx:
     input:
-        rules.bgzip_genome.output
+        rules.bgzipGenome.output
     output:
-         multiext(f'{rules.bgzip_genome.output}', '.fai', '.gzi')
+         multiext(f'{rules.bgzipGenome.output}', '.fai', '.gzi')
     log:
         'logs/index_genome/index_genome.log'
     conda:
@@ -122,7 +125,7 @@ rule faidx:
     shell:
         'samtools faidx {input} &> {log}'
 
-rule fastqc:
+rule fastQC:
     input:
         lambda wc: DATA.xs(wc.single, level = 3)['path']
     output:
@@ -133,8 +136,8 @@ rule fastqc:
     wrapper:
         '0.49.0/bio/fastqc'
 
-# Modify FASTQ filename to match {sample}-{read} for multiQC
-rule modify_fastqc:
+
+rule modifyFastQC:
     input:
         'qc/fastqc/unmod/{single}.raw.fastqc.zip'
     output:
@@ -147,6 +150,7 @@ rule modify_fastqc:
         f'{ENVS}/coreutils.yaml'
     shell:
         '{SCRIPTS}/modify_fastqc.sh {input} {output} {params.name} &> {log}'
+
 
 rule cutadapt:
     input:
@@ -168,7 +172,8 @@ rule cutadapt:
     shell:
         cutadapt_cmd
 
-rule modify_cutadapt:
+
+rule modifyCutadapt:
     input:
         rules.cutadapt.output.qc
     output:
@@ -176,14 +181,15 @@ rule modify_cutadapt:
     group:
         'cutadapt'
     log:
-        'logs/modify_cutadapt/{sample_type}.log'
+        'logs/modifyCutadapt/{sample_type}.log'
     conda:
         f'{ENVS}/coreutils.yaml'
     shell:
         'awk -v sample={wildcards.sample_type} '
             '-f {SCRIPTS}/modify_cutadapt.awk {input} > {output} 2> {log}'
 
-rule fastq_screen:
+
+rule fastqScreen:
     input:
         'fastq/trimmed/{single}.trim.fastq.gz'
     output:
@@ -200,7 +206,8 @@ rule fastq_screen:
     wrapper:
         "0.49.0/bio/fastq_screen"
 
-rule fastqc_trimmed:
+
+rule fastqcTrimmed:
     input:
         'fastq/trimmed/{single}.trim.fastq.gz'
     output:
@@ -211,86 +218,113 @@ rule fastqc_trimmed:
     wrapper:
         '0.49.0/bio/fastqc'
 
-rule unzip_genome:
-    input:
-        rules.bgzip_genome.output
-    output:
-        f'genome/{BUILD}.fa'
-    log:
-        f'logs/unzip_genome/{config["build"]}.log'
-    conda:
-        f'{ENVS}/tabix.yaml'
-    shell:
-        'bgzip -cd {input} > {output}'
 
-rule hisat2_build:
+rule bowtie2Build:
     input:
-        rules.unzip_genome.output
+        rules.bgzipGenome.output
     output:
-        expand('genome/index/{build}.{n}.ht2',
-            build = config["build"],
-            n = ['1', '2', '3', '4', '5', '6', '7', '8'])
+        expand('genome/index/{build}.{n}.bt2',
+               n=['1', '2', '3', '4', 'rev.1', 'rev.2'], build=BUILD)
     params:
-        basename = f'genome/index/{config["build"]}'
+        basename = f'genome/index/{BUILD}'
     log:
-        f'logs/hisat2_build/{config["build"]}.log'
+        'logs/bowtie2Build.log'
     conda:
-        f'{ENVS}/hisat2.yaml'
+        f'{ENVS}/bowtie2.yaml'
     threads:
-        6
+        workflow.cores
     shell:
-        'hisat2-build --threads {threads} {input} {params.basename} '
-            '&> {log}'
+        'bowtie2-build --threads {threads} {input} {params.basename} &> {log}'
 
-rule hisat2_map:
+
+rule bowtie2Map:
     input:
         reads_in = trimmed_out,
-        index = rules.hisat2_build.output
+        index = rules.bowtie2Build.output
     output:
-        bam = 'mapped/{sample_type}.bam',
-        qc = 'qc/hisat2/{sample_type}.hisat2.txt'
+        sam = pipe('mapped/{sample_type}.sam'),
+        qc = 'qc/bowtie2/{sample_type}.bowtie2.txt'
     params:
-        index = f'genome/index/{config["build"]}',
+        index = f'genome/index/{config["build"]}'
+    group:
+        'map'
     log:
-        'logs/hisat2_map/{sample_type}.log'
+        'logs/bowtie2Map/{sample_type}.log'
     conda:
-        f'{ENVS}/hisat2.yaml'
+        f'{ENVS}/bowtie2.yaml'
     threads:
-        12
+        max((workflow.cores - 1) * 0.75, 1)
     shell:
-        hisat2_cmd
+        bowtie2_cmd
+
+
+rule fixBAM:
+    input:
+        rules.bowtie2Map.output.sam
+    output:
+        pipe('mapped/{sample_type}.fixmate.bam')
+    group:
+        'map'
+    log:
+        'logs/fixmate/{sample_type}.log'
+    conda:
+        f'{ENVS}/samtools.yaml'
+    shell:
+        'samtools fixmate -O bam,level=0 -m {input} {output} &> {log}'
+
 
 rule sortBAM:
     input:
-        rules.hisat2_map.output.bam
+        rules.fixBAM.output
     output:
-        'mapped/{sample_type}.sort.bam',
+        'mapped/{sample_type}.sort.bam'
+    group:
+        'map'
     log:
         'logs/sortBAM/{sample_type}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
-        12
+        max((workflow.cores - 1) * 0.25, 1)
     shell:
-        'samtools sort -@ 6 {input} > {output} 2> {log}'
+        'samtools sort -@ {threads} {input} > {output} 2> {log}'
 
-rule indexBAM:
+
+rule markdupBAM:
     input:
         rules.sortBAM.output
     output:
-        f'{rules.sortBAM.output}.bai'
+        bam = 'mapped/{sample_type}.markdup.bam',
+        qc = 'qc/deduplicate/{sample_type}.txt'
+    log:
+        'logs/markdupBAM/{sample_type}.log'
+    conda:
+        f'{ENVS}/samtools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'samtools markdup -@ {threads} '
+        '-s -f {output.qc} {input} {output.bam} &> {log}'
+
+
+rule indexBAM:
+    input:
+        rules.markdupBAM.output.bam
+    output:
+        f'{rules.markdupBAM.output.bam}.bai'
     log:
         'logs/indexBAM/{sample_type}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
-        12
+        workflow.cores
     shell:
-        'samtools index -@ 6 {input} &> {log}'
+        'samtools index -@ {threads} {input} &> {log}'
+
 
 rule mergeInput:
     input:
-        expand('mapped/{sample}.sort.bam',sample=INPUTS)
+        expand('mapped/{sample}-input.markdup.bam',sample=INPUTS)
     output:
         'mapped/all-input.sort.bam'
     log:
@@ -300,9 +334,37 @@ rule mergeInput:
     shell:
         'samtools merge {output} {input} &> {log}'
 
+
+rule macs2:
+    input:
+        input = rules.mergeInput.output,
+        bound = 'mapped/{sample}-bound.markdup.bam'
+    output:
+        dir = directory('macs2/{sample}'),
+        summits = 'macs2/{sample}/{sample}_summits.bed',
+        narrowPeak = 'macs2/{sample}/{sample}_peaks.narrowPeak',
+        xlsPeak = 'macs2/{sample}/{sample}_peaks.xls',
+        model = 'macs2/{sample}/{sample}_model.r'
+    params:
+        genome_size = 2652783500
+    threads:
+        6
+    log:
+        'logs/macs/{sample}.log'
+    conda:
+        f'{ENVS}/macs2.yaml'
+    shell:
+        'macs2 callpeak '
+          '--treatment {input.bound} '
+	      '--control {input.input} '
+ 	      '--format BAM --gsize {params.genome_size} '
+	      '--name {wildcards.sample} '
+	      '--outdir {output.dir} &> {log}'
+
+
 rule samtoolsStats:
     input:
-        rules.sortBAM.output
+        rules.markdupBAM.output.bam
     output:
         'qc/samtools/stats/{sample_type}.stats.txt'
     log:
@@ -312,9 +374,10 @@ rule samtoolsStats:
     shell:
         'samtools stats {input} > {output} 2> {log}'
 
+
 rule samtoolsIdxstats:
     input:
-        bam = rules.sortBAM.output,
+        bam = rules.markdupBAM.output.bam,
         index = rules.indexBAM.output
     output:
         'qc/samtools/idxstats/{sample_type}.idxstats.txt'
@@ -327,7 +390,7 @@ rule samtoolsIdxstats:
 
 rule samtoolsFlagstat:
     input:
-        rules.sortBAM.output
+        rules.markdupBAM.output.bam
     output:
         'qc/samtools/flagstat/{sample_type}.flagstat.txt'
     log:
@@ -339,7 +402,7 @@ rule samtoolsFlagstat:
 
 rule bamqc:
     input:
-        bam = rules.sortBAM.output
+        bam = rules.markdupBAM.output.bam
     output:
         directory('qc/bamqc/{sample_type}')
     resources:
@@ -388,21 +451,25 @@ rule multibamqc:
 rule multiQC:
     input:
         expand('qc/fastqc/{single}.raw_fastqc.zip',
-            single =  DATA['single']),
+            single= DATA['single']),
         expand('qc/fastq_screen/{single}.fastq_screen.txt',
-            single =  DATA['single']),
-        expand('qc/cutadapt/{single}.cutadapt.txt', single =  DATA['single']),
+            single=DATA['single']),
+        expand('qc/cutadapt/{single}.cutadapt.txt',
+            single=DATA['single']),
         expand('qc/fastqc/{single}.trim_fastqc.zip',
-            single =  DATA['single']),
-        expand('qc/hisat2/{sample_type}.hisat2.txt',
-            sample_type = SAMPLES_TYPE),
+            single=DATA['single']),
+        expand('qc/bowtie2/{sample_type}.bowtie2.txt',
+            sample_type=SAMPLES_TYPE),
+        expand('macs2/{sample}/{sample}_peaks.xls',
+            sample=BOUNDS),
         expand('qc/samtools/stats/{sample_type}.stats.txt',
-            sample_type = SAMPLES_TYPE),
+            sample_type=SAMPLES_TYPE),
         expand('qc/samtools/idxstats/{sample_type}.idxstats.txt',
-            sample_type = SAMPLES_TYPE),
+            sample_type=SAMPLES_TYPE),
         expand('qc/samtools/flagstat/{sample_type}.flagstat.txt',
-            sample_type = SAMPLES_TYPE),
-        expand('qc/bamqc/{sample_type}', sample_type = SAMPLES_TYPE),
+            sample_type=SAMPLES_TYPE),
+        expand('qc/bamqc/{sample_type}',
+            sample_type=SAMPLES_TYPE),
     output:
         directory('qc/multiqc')
     log:
