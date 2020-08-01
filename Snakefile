@@ -29,9 +29,9 @@ if not DATA['read'].str.match(r'R[12]').all():
 if not DATA['type'].str.match(r'input|bound').all():
     sys.exit(f'Invalid read definition in {DATA_TABLE}.')
 
-seq_type = 'se'
+paired = False
 
-if seq_type == "pe":
+if paired:
     single_regex = '[^\/\s.-]+-\d+-(input|bound)-R[12]'
     DATA['single'] = (DATA[['group', 'rep', 'type', 'read']]
         .apply(lambda x: '-'.join(x), axis = 1))
@@ -94,12 +94,15 @@ wildcard_constraints:
     single = single_regex,
     rep = '\d+',
     read = 'R[12]',
-    type = 'input|bound'
+    type = 'input|bound',
+    stage = 'markdup|filtered'
 
 rule all:
     input:
         ['qc/multiqc', 'qc/multibamqc', f'genome/{BUILD}.fa.gz.fai',
-         expand('macs2/{sample}/{sample}_summits.bed', sample=BOUNDS)]
+         expand('macs2/{sample}/{sample}_summits.bed', sample=BOUNDS),
+         'qc/deeptools/correlation-heatmap-BAM.png',
+         expand('bigwig/{sample_type}.bigwig', sample_type=SAMPLES_TYPE)]
 
 rule bgzipGenome:
     input:
@@ -270,7 +273,7 @@ rule fixBAM:
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
-        'samtools fixmate -O bam,level=0 -m {input} {output} &> {log}'
+        'samtools fixmate -O bam -m {input} {output} &> {log}'
 
 
 rule sortBAM:
@@ -309,17 +312,212 @@ rule markdupBAM:
 
 rule indexBAM:
     input:
-        rules.markdupBAM.output.bam
+        'mapped/{sample_type}.{stage}.bam'
     output:
-        f'{rules.markdupBAM.output.bam}.bai'
+        'mapped/{sample_type}.{stage}.bam.bai'
     log:
-        'logs/indexBAM/{sample_type}.log'
+        'logs/indexBAM/{sample_type}-{stage}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
         workflow.cores
     shell:
         'samtools index -@ {threads} {input} &> {log}'
+
+
+blacklist = '/media/stephen/Data/20120810_LewisS_AM_MMhmeDIP/hmeDip-Seq/mm10.blacklist-merged.bed'
+# This will reduce the effectiveGenomeSize
+
+def setBlacklistCommand():
+    if blacklist:
+        cmd = ('bedtools merge -d {params.distance} -i {input} '
+               '> {output} 2> {log}')
+    else:
+        cmd = 'touch {input} &> {log}'
+    return cmd
+
+
+rule processBlacklist:
+    input:
+        blacklist if blacklist else []
+    output:
+        f'genome/{BUILD}-blacklist.bed'
+    params:
+        # Max distance between features allowed for features to be merged.
+        distance = 1000
+    log:
+        f'logs/processBlacklist/{BUILD}.log'
+    conda:
+        f'{ENVS}/bedtools.yaml'
+    shell:
+        setBlacklistCommand()
+
+
+rule estimateReadFiltering:
+    input:
+        bam = rules.markdupBAM.output.bam,
+        index = 'mapped/{sample_type}.markdup.bam.bai',
+        blacklist = rules.processBlacklist.output
+    output:
+        'qc/deeptools/estimateReadFiltering/{sample_type}.txt'
+    params:
+        minMapQ = 15,
+        binSize = 10000,
+        distanceBetweenBins = 0,
+        properPair = '--samFlagInclude 2' if paired else '',
+    log:
+        'logs/estimateReadFiltering/{sample_type}.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'estimateReadFiltering --bamfiles {input.bam} --outFile {output} '
+        '--binSize {params.binSize} --blackListFileName {input.blacklist} '
+        '--distanceBetweenBins {params.distanceBetweenBins} '
+        '--minMappingQuality {params.minMapQ} --ignoreDuplicates '
+        '--samFlagExclude 260 {params.properPair} '
+        '--numberOfProcessors {threads} &> {log}'
+
+
+rule alignmentSieve:
+    input:
+        bam = rules.markdupBAM.output.bam,
+        index = 'mapped/{sample_type}.markdup.bam.bai',
+        blacklist = rules.processBlacklist.output
+    output:
+        bam = 'mapped/{sample_type}.filtered.bam',
+        qc = 'qc/deeptools/{sample_type}-filter-metrics.txt'
+    params:
+        minMapQ = 15,
+        maxFragmentLength = 2000,
+        properPair = '--samFlagInclude 2' if paired else '',
+    log:
+        'logs/alignmentSieve/{sample_type}.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'alignmentSieve --bam {input.bam} --outFile {output.bam} '
+        '--minMappingQuality {params.minMapQ} --ignoreDuplicates '
+        '--samFlagExclude 260 {params.properPair} '
+        '--maxFragmentLength {params.maxFragmentLength} '
+        '--blackListFileName {input.blacklist} '
+        '--numberOfProcessors {threads} --filterMetrics {output.qc} &> {log}'
+
+
+rule multiBamSummary:
+    input:
+        bams = expand('mapped/{sample_type}.filtered.bam',
+            sample_type=SAMPLES_TYPE),
+        indexes = expand('mapped/{sample_type}.filtered.bam.bai',
+            sample_type=SAMPLES_TYPE)
+    output:
+        'qc/deeptools/multiBamSummary.npz'
+    params:
+        binSize = 10000,
+        distanceBetweenBins = 0,
+        labels = ' '.join(SAMPLES_TYPE),
+        extendReads = 150
+    log:
+        'logs/multiBamSummary.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'multiBamSummary bins --bamfiles {input.bams} --outFileName {output} '
+        '--binSize {params.binSize} --labels {params.labels} '
+        '--distanceBetweenBins {params.distanceBetweenBins} '
+        '--extendReads {params.extendReads} --numberOfProcessors {threads} &> {log}'
+
+
+rule plotCorrelation:
+    input:
+        rules.multiBamSummary.output
+    output:
+        plot = 'qc/deeptools/plotCorrelation.png',
+        matrix = 'qc/deeptools/plotCorrelation.tsv'
+    params:
+        corMethod = 'pearson',
+        colorMap = 'viridis',
+        labels = ' '.join(SAMPLES_TYPE)
+    log:
+        'logs/plotCorrelation.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    shell:
+        'plotCorrelation --corData {input} --corMethod {params.corMethod} '
+        '--whatToPlot heatmap --labels {params.labels} --skipZeros '
+        '--colorMap {params.colorMap} --plotNumbers '
+        '--plotFile {output.plot} --outFileCorMatrix {output.matrix} &> {log}'
+
+
+rule plotPCA:
+    input:
+        rules.multiBamSummary.output
+    output:
+        plot = 'qc/deeptools/plotPCA.png',
+        data = 'qc/deeptools/plotPCA.tab'
+    params:
+        labels = ' '.join(SAMPLES_TYPE)
+    log:
+        'logs/plotPCA.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    shell:
+        'plotPCA --corData {input} --labels {params.labels} '
+        '--plotFile {output.plot} --outFileNameData {output.data} &> {log}'
+
+
+rule plotCoverage:
+    input:
+        expand('mapped/{sample_type}.filtered.bam',
+            sample_type=SAMPLES_TYPE),
+    output:
+        plot = 'qc/deeptools/plotCoverage.png',
+        data = 'qc/deeptools/plotCoverage.tab',
+        info = 'qc/deeptools/plotCoverage.info'
+    params:
+        nSamples = 1000000,
+        labels = ' '.join(SAMPLES_TYPE)
+    log:
+        'logs/plotCoverage.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'plotCoverage --bamfiles {input} --labels {params.labels} '
+        '--plotFile {output.plot} --outRawCounts {output.data} '
+        '--numberOfSamples {params.nSamples} --numberOfProcessors {threads} '
+        '> {output.info} 2> {log}'
+
+
+rule plotFingerprint:
+    input:
+        bams = expand('mapped/{sample_type}.filtered.bam',
+            sample_type=SAMPLES_TYPE),
+        indexes = expand('mapped/{sample_type}.filtered.bam.bai',
+            sample_type=SAMPLES_TYPE)
+    output:
+        plot = 'qc/deeptools/plotFingerprint.png',
+        data = 'qc/deeptools/plotFingerprint.tab'
+    params:
+        nSamples = 500000,
+        labels = ' '.join(SAMPLES_TYPE)
+    log:
+        'logs/plotFingerprint.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'plotFingerprint --bamfiles {input} --labels {params.labels} '
+        '--plotFile {output.plot} --outRawCounts {output.data} '
+        '--numberOfSamples {params.nSamples} --skipZeros '
+        '--numberOfProcessors {threads} &> {log}'
 
 
 rule mergeInput:
@@ -335,6 +533,47 @@ rule mergeInput:
         'samtools merge {output} {input} &> {log}'
 
 
+rule indexInputBAM:
+    input:
+        rules.mergeInput.output
+    output:
+        f'{rules.mergeInput.output}.bai'
+    log:
+        'logs/indexInputBAM.log'
+    conda:
+        f'{ENVS}/samtools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'samtools index -@ {threads} {input} &> {log}'
+
+
+rule bamCompare:
+    input:
+        treatment = rules.alignmentSieve.output.bam,
+        treatmentIndex = 'mapped/{sample_type}.filtered.bam.bai',
+        control = rules.mergeInput.output,
+        controlIndex = rules.indexInputBAM.output,
+    output:
+        'bigwig/{sample_type}.bigwig',
+    params:
+        binSize = 10,
+        scale = 'SES',
+        extendReads = 150,
+        operation = 'log2',
+        genomeSize = 2652783500,
+    log:
+        'logs/bamCompare/{sample_type}.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    shell:
+        'bamCompare --bamfile1 {input.treatment} --bamfile2 {input.control} '
+        '--outFileName {output} --binSize {params.binSize} '
+        '--extendReads {params.extendReads} --operation {params.operation} '
+        '--effectiveGenomeSize {params.genomeSize} '
+        '--numberOfProcessors {threads} &> {log}'
+
+
 rule macs2:
     input:
         input = rules.mergeInput.output,
@@ -346,7 +585,7 @@ rule macs2:
         xlsPeak = 'macs2/{sample}/{sample}_peaks.xls',
         model = 'macs2/{sample}/{sample}_model.r'
     params:
-        genome_size = 2652783500
+        genomeSize = 2652783500
     threads:
         6
     log:
@@ -357,7 +596,7 @@ rule macs2:
         'macs2 callpeak '
           '--treatment {input.bound} '
 	      '--control {input.input} '
- 	      '--format BAM --gsize {params.genome_size} '
+ 	      '--format BAM --gsize {params.genomeSize} '
 	      '--name {wildcards.sample} '
 	      '--outdir {output.dir} &> {log}'
 
@@ -378,7 +617,7 @@ rule samtoolsStats:
 rule samtoolsIdxstats:
     input:
         bam = rules.markdupBAM.output.bam,
-        index = rules.indexBAM.output
+        index = 'mapped/{sample_type}.markdup.bam.bai'
     output:
         'qc/samtools/idxstats/{sample_type}.idxstats.txt'
     log:
@@ -387,6 +626,7 @@ rule samtoolsIdxstats:
         f'{ENVS}/samtools.yaml'
     shell:
         'samtools idxstats {input.bam} > {output} 2> {log}'
+
 
 rule samtoolsFlagstat:
     input:
@@ -400,53 +640,6 @@ rule samtoolsFlagstat:
     shell:
         'samtools flagstat {input} > {output} 2> {log}'
 
-rule bamqc:
-    input:
-        bam = rules.markdupBAM.output.bam
-    output:
-        directory('qc/bamqc/{sample_type}')
-    resources:
-        mem_mb = 3000
-    log:
-        'logs/bamqc/{sample_type}.log'
-    conda:
-        f'{ENVS}/qualimap.yaml'
-    threads:
-        12
-    shell:
-        'qualimap bamqc '
-            '-bam {input.bam} -outdir {output} '
-            '-nt 6 --java-mem-size={resources.mem_mb}M '
-            '--paint-chromosome-limits '
-        '&> {log}'
-
-rule multibamqc_config:
-    input:
-        expand('qc/bamqc/{sample_type}', sample_type = SAMPLES_TYPE)
-    output:
-        'qc/bamqc/multibamqc.config'
-    group:
-        'multiBAM_QC'
-    log:
-        'logs/multibamqc_config/multibamqc_config.log'
-    shell:
-        '{SCRIPTS}/multibamqc_config.py {input} > {output} 2> {log}'
-
-rule multibamqc:
-    input:
-        rules.multibamqc_config.output
-    output:
-        directory('qc/multibamqc')
-    group:
-        'multiBAM_QC'
-    log:
-        'logs/multibamqc/multibamqc.log'
-    conda:
-        f'{ENVS}/qualimap.yaml'
-    shell:
-        'qualimap multi-bamqc '
-            '--data {input} -outdir {output} '
-        '&> {log}'
 
 rule multiQC:
     input:
@@ -462,13 +655,19 @@ rule multiQC:
             sample_type=SAMPLES_TYPE),
         expand('macs2/{sample}/{sample}_peaks.xls',
             sample=BOUNDS),
+        expand('qc/deeptools/estimateReadFiltering/{sample_type}.txt',
+            sample_type=SAMPLES_TYPE),
+        'qc/deeptools/plotCorrelation.tsv',
+        'qc/deeptools/plotPCA.tab',
+        'qc/deeptools/plotCoverage.info',
+        'qc/deeptools/plotCoverage.tab',
+        'qc/deeptools/plotFingerprint.png',
+        'qc/deeptools/plotFingerprint.tab',
         expand('qc/samtools/stats/{sample_type}.stats.txt',
             sample_type=SAMPLES_TYPE),
         expand('qc/samtools/idxstats/{sample_type}.idxstats.txt',
             sample_type=SAMPLES_TYPE),
         expand('qc/samtools/flagstat/{sample_type}.flagstat.txt',
-            sample_type=SAMPLES_TYPE),
-        expand('qc/bamqc/{sample_type}',
             sample_type=SAMPLES_TYPE),
     output:
         directory('qc/multiqc')
