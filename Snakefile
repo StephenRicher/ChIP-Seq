@@ -101,8 +101,7 @@ rule all:
     input:
         ['qc/multiqc', 'qc/multibamqc', f'genome/{BUILD}.fa.gz.fai',
          expand('macs2/{sample}/{sample}_summits.bed', sample=BOUNDS),
-         'qc/deeptools/correlation-heatmap-BAM.png',
-         expand('bigwig/{sample_type}.bigwig', sample_type=SAMPLES_TYPE)]
+         'deeptools/computeMatrix/matrix-scaled.gz']
 
 rule bgzipGenome:
     input:
@@ -171,7 +170,7 @@ rule cutadapt:
     conda:
         f'{ENVS}/cutadapt.yaml'
     threads:
-        THREADS
+        workflow.cores
     shell:
         cutadapt_cmd
 
@@ -205,7 +204,7 @@ rule fastqScreen:
     log:
         'logs/fastq_screen/{single}.log'
     threads:
-        8
+        workflow.cores
     wrapper:
         "0.49.0/bio/fastq_screen"
 
@@ -310,21 +309,6 @@ rule markdupBAM:
         '-s -f {output.qc} {input} {output.bam} &> {log}'
 
 
-rule indexBAM:
-    input:
-        'mapped/{sample_type}.{stage}.bam'
-    output:
-        'mapped/{sample_type}.{stage}.bam.bai'
-    log:
-        'logs/indexBAM/{sample_type}-{stage}.log'
-    conda:
-        f'{ENVS}/samtools.yaml'
-    threads:
-        workflow.cores
-    shell:
-        'samtools index -@ {threads} {input} &> {log}'
-
-
 blacklist = '/media/stephen/Data/20120810_LewisS_AM_MMhmeDIP/hmeDip-Seq/mm10.blacklist-merged.bed'
 # This will reduce the effectiveGenomeSize
 
@@ -407,6 +391,21 @@ rule alignmentSieve:
         '--numberOfProcessors {threads} --filterMetrics {output.qc} &> {log}'
 
 
+rule indexBAM:
+    input:
+        'mapped/{sample_type}.{stage}.bam'
+    output:
+        'mapped/{sample_type}.{stage}.bam.bai'
+    log:
+        'logs/indexBAM/{sample_type}-{stage}.log'
+    conda:
+        f'{ENVS}/samtools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'samtools index -@ {threads} {input} &> {log}'
+
+
 rule multiBamSummary:
     input:
         bams = expand('mapped/{sample_type}.filtered.bam',
@@ -454,6 +453,28 @@ rule plotCorrelation:
         '--plotFile {output.plot} --outFileCorMatrix {output.matrix} &> {log}'
 
 
+def setColours(samples):
+    """ Find group (and input) and assign to specific colour. """
+    colours = ''
+    colourPool = ['#E69F00', '#56B4E9', '#009E73', '#F0E442',
+                  '#0072B2', '#D55E00', '#CC79A7']
+    # Add double quotes for compatibility with shell
+    colourPool = [f'"{colour}"' for colour in colourPool]
+    usedColours = {}
+    for sample in samples:
+        if sample.endswith('-input'):
+            # Inputs are always black
+            colours += '"#000000" '
+        else:
+            group = sample.split('-')[0]
+            if group not in usedColours:
+                usedColours[group] = colourPool[0]
+                # Remove from pool
+                colourPool = colourPool[1:]
+            colours += f'{usedColours[group]} '
+    return f'{colours}'
+
+
 rule plotPCA:
     input:
         rules.multiBamSummary.output
@@ -461,20 +482,24 @@ rule plotPCA:
         plot = 'qc/deeptools/plotPCA.png',
         data = 'qc/deeptools/plotPCA.tab'
     params:
-        labels = ' '.join(SAMPLES_TYPE)
+        labels = ' '.join(SAMPLES_TYPE),
+        colours = setColours(SAMPLES_TYPE)
     log:
         'logs/plotPCA.log'
     conda:
         f'{ENVS}/deeptools.yaml'
     shell:
-        'plotPCA --corData {input} --labels {params.labels} '
-        '--plotFile {output.plot} --outFileNameData {output.data} &> {log}'
+        'plotPCA --corData {input} --colors {params.colours} '
+        '--labels {params.labels} --plotFile {output.plot} '
+        '--outFileNameData {output.data} &> {log}'
 
 
 rule plotCoverage:
     input:
-        expand('mapped/{sample_type}.filtered.bam',
+        bams = expand('mapped/{sample_type}.filtered.bam',
             sample_type=SAMPLES_TYPE),
+        indexes = expand('mapped/{sample_type}.filtered.bam.bai',
+            sample_type=SAMPLES_TYPE)
     output:
         plot = 'qc/deeptools/plotCoverage.png',
         data = 'qc/deeptools/plotCoverage.tab',
@@ -489,7 +514,7 @@ rule plotCoverage:
     threads:
         workflow.cores
     shell:
-        'plotCoverage --bamfiles {input} --labels {params.labels} '
+        'plotCoverage --bamfiles {input.bams} --labels {params.labels} '
         '--plotFile {output.plot} --outRawCounts {output.data} '
         '--numberOfSamples {params.nSamples} --numberOfProcessors {threads} '
         '> {output.info} 2> {log}'
@@ -514,7 +539,7 @@ rule plotFingerprint:
     threads:
         workflow.cores
     shell:
-        'plotFingerprint --bamfiles {input} --labels {params.labels} '
+        'plotFingerprint --bamfiles {input.bams} --labels {params.labels} '
         '--plotFile {output.plot} --outRawCounts {output.data} '
         '--numberOfSamples {params.nSamples} --skipZeros '
         '--numberOfProcessors {threads} &> {log}'
@@ -550,28 +575,82 @@ rule indexInputBAM:
 
 rule bamCompare:
     input:
-        treatment = rules.alignmentSieve.output.bam,
-        treatmentIndex = 'mapped/{sample_type}.filtered.bam.bai',
+        treatment ='mapped/{sample}-bound.filtered.bam',
+        treatmentIndex = 'mapped/{sample}-bound.filtered.bam.bai',
         control = rules.mergeInput.output,
         controlIndex = rules.indexInputBAM.output,
     output:
-        'bigwig/{sample_type}.bigwig',
+        'bigwig/{sample}-Input.bigwig',
     params:
-        binSize = 10,
+        binSize = 50,
         scale = 'SES',
         extendReads = 150,
         operation = 'log2',
         genomeSize = 2652783500,
     log:
-        'logs/bamCompare/{sample_type}.log'
+        'logs/bamCompare/{sample}.log'
     conda:
         f'{ENVS}/deeptools.yaml'
+    threads:
+        workflow.cores
     shell:
         'bamCompare --bamfile1 {input.treatment} --bamfile2 {input.control} '
         '--outFileName {output} --binSize {params.binSize} '
         '--extendReads {params.extendReads} --operation {params.operation} '
         '--effectiveGenomeSize {params.genomeSize} '
         '--numberOfProcessors {threads} &> {log}'
+
+
+rule computeMatrix:
+    input:
+        expand('bigwig/{sample}-Input.bigwig', sample=BOUNDS)
+    output:
+        scaledGZ = 'deeptools/computeMatrix/matrix-scaled.gz',
+        scaled = 'deeptools/computeMatrix/matrix-scaled.tab',
+        sortedRegions = 'deeptools/computeMatrix/genes.bed'
+    params:
+        regionBodyLength = 10000,
+        upstream = 2000,
+        downstream = 2000,
+        samplesLabel = ' '.join(BOUNDS),
+        genes = '/media/stephen/Data/20120810_LewisS_AM_MMhmeDIP/hmeDip-Seq/mm10-gencode_vm23.bed'
+    log:
+        'logs/computeMatrix.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        workflow.cores
+    shell:
+        'computeMatrix scale-regions --scoreFileName {input} '
+        '--regionsFileName {params.genes} --outFileName {output.scaledGZ} '
+        '--outFileNameMatrix {output.scaled} --skipZeros '
+        '--regionBodyLength {params.regionBodyLength} '
+        '--samplesLabel {params.samplesLabel} '
+        '--upstream {params.upstream} --downstream {params.downstream} '
+        '--outFileSortedRegions {output.sortedRegions} '
+        '--numberOfProcessors {threads} &> {log}'
+
+
+rule plotProfile:
+    input:
+        rules.computeMatrix.output.scaledGZ
+    output:
+        plot = 'qc/deeptools/plotProfile.png',
+        data = 'qc/deeptools/plotProfile-data.tab',
+        bed = 'qc/deeptools/plotProfile-regions.bed'
+    params:
+        dpi = 300,
+        plotsPerRow = 2,
+        averageType = 'median',
+    log:
+        'logs/plotProfile.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    shell:
+        'plotProfile --matrixFile {input} --outFileName {output.plot} '
+        '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
+        '--dpi {params.dpi} --averageType {params.averageType} '
+        '--numPlotsPerRow {params.plotsPerRow} &> {log}'
 
 
 rule macs2:
@@ -663,6 +742,7 @@ rule multiQC:
         'qc/deeptools/plotCoverage.tab',
         'qc/deeptools/plotFingerprint.png',
         'qc/deeptools/plotFingerprint.tab',
+        'qc/deeptools/plotProfile-data.tab',
         expand('qc/samtools/stats/{sample_type}.stats.txt',
             sample_type=SAMPLES_TYPE),
         expand('qc/samtools/idxstats/{sample_type}.idxstats.txt',
