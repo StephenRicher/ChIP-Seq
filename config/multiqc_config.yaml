@@ -13,12 +13,19 @@ module_order:
     - fastq_screen:
         name: 'FastQ Screen (trimmed sequences)'
     - bowtie2
-    - qualimap
     - samtools
     - featureCounts
+    - deeptools
     - macs2
 
+custom_plot_config:
+    deeptools_correlation:
+        cmap: viridis
+
 log_filesize_limit: 100000000
+
+remove_sections:
+    - samtools-stats-alignment
 
 extra_fn_clean_exts:
     - '.'
