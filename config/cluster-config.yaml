@@ -1,5 +1,5 @@
 __default__:
-  account: "free"
+  account: "eb-bb1271"
   partition: "batch"
   ntasks: 1
   cpus-per-task: 16
@@ -16,7 +16,11 @@ __default__:
 bowtie2Build:
     time : 120
 
-bowtie2Map:
+map:
+    time : 180
+
+bamCompare:
     time : 120
 
-    
+computeMatrix:
+    time : 180
