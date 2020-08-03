@@ -111,7 +111,7 @@ wildcard_constraints:
 
 rule all:
     input:
-        ['qc/multiqc', 'qc/multibamqc', f'genome/{BUILD}.fa.gz.fai',
+        ['qc/multiqc', f'genome/{BUILD}.fa.gz.fai',
          expand('macs2/{sample}/{sample}_summits.bed', sample=BOUNDS),
          'deeptools/computeMatrix/matrix-scaled.gz']
 
