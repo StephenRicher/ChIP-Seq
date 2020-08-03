@@ -16,7 +16,7 @@ if not config:
 default_config = {
     'workdir':           workflow.basedir,
     'tmpdir':            tempfile.gettempdir(),
-    'threads':           1           ,
+    'threads':           workflow.cores       ,
     'data':              ''          ,
     'paired':            ''          ,
     'genome':
@@ -27,11 +27,13 @@ default_config = {
     'fastq_screen':      None,
 }
 
+
 config = set_config(config, default_config)
 workdir: config['workdir']
 BUILD = config['genome']['build']
-
+THREADS = config['threads']
 DATA = pd.read_table(config['data'], sep = ',', dtype = {'rep' : str})
+
 
 # Validate read file input with wildcard definitions
 if not DATA['group'].str.match(r'[^\/\s.-]+').all():
@@ -95,9 +97,6 @@ SAMPLES_TYPE = list(DATA['sample_type'].unique())
 INPUTS = [input[:-6] for input in SAMPLES_TYPE if input.endswith('input')]
 # Get group-rep for bound sample
 BOUNDS = [bound[:-6] for bound in SAMPLES_TYPE if bound.endswith('bound')]
-
-
-THREADS = 1
 
 wildcard_constraints:
     group = '[^\/\s.-]+',
@@ -182,7 +181,7 @@ rule cutadapt:
     conda:
         f'{ENVS}/cutadapt.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         cutadapt_cmd
 
@@ -217,7 +216,7 @@ if config['fastq_screen'] is not None:
         log:
             'logs/fastq_screen/{single}.log'
         threads:
-            workflow.cores
+            THREADS
         wrapper:
             "0.49.0/bio/fastq_screen"
 
@@ -247,7 +246,7 @@ rule bowtie2Build:
     conda:
         f'{ENVS}/bowtie2.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'bowtie2-build --threads {threads} {input} {params.basename} &> {log}'
 
@@ -268,7 +267,7 @@ rule bowtie2Map:
     conda:
         f'{ENVS}/bowtie2.yaml'
     threads:
-        max((workflow.cores - 1) * 0.75, 1)
+        max((THREADS - 1) * 0.75, 1)
     shell:
         bowtie2_cmd
 
@@ -300,7 +299,7 @@ rule sortBAM:
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
-        max((workflow.cores - 1) * 0.25, 1)
+        max((THREADS - 1) * 0.25, 1)
     shell:
         'samtools sort -@ {threads} {input} > {output} 2> {log}'
 
@@ -316,7 +315,7 @@ rule markdupBAM:
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'samtools markdup -@ {threads} '
         '-s -f {output.qc} {input} {output.bam} &> {log}'
@@ -364,7 +363,7 @@ rule estimateReadFiltering:
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'estimateReadFiltering --bamfiles {input.bam} --outFile {output} '
         '--binSize {params.binSize} --blackListFileName {input.blacklist} '
@@ -391,7 +390,7 @@ rule alignmentSieve:
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'alignmentSieve --bam {input.bam} --outFile {output.bam} '
         '--minMappingQuality {params.minMapQ} --ignoreDuplicates '
@@ -411,7 +410,7 @@ rule indexBAM:
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'samtools index -@ {threads} {input} &> {log}'
 
@@ -434,7 +433,7 @@ rule multiBamSummary:
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'multiBamSummary bins --bamfiles {input.bams} --outFileName {output} '
         '--binSize {params.binSize} --labels {params.labels} '
@@ -522,7 +521,7 @@ rule plotCoverage:
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'plotCoverage --bamfiles {input.bams} --labels {params.labels} '
         '--plotFile {output.plot} --outRawCounts {output.data} '
@@ -547,7 +546,7 @@ rule plotFingerprint:
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'plotFingerprint --bamfiles {input.bams} --labels {params.labels} '
         '--plotFile {output.plot} --outRawCounts {output.data} '
@@ -578,7 +577,7 @@ rule indexInputBAM:
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'samtools index -@ {threads} {input} &> {log}'
 
@@ -602,7 +601,7 @@ rule bamCompare:
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'bamCompare --bamfile1 {input.treatment} --bamfile2 {input.control} '
         '--outFileName {output} --binSize {params.binSize} '
@@ -629,7 +628,7 @@ rule computeMatrix:
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
-        workflow.cores
+        THREADS
     shell:
         'computeMatrix scale-regions --scoreFileName {input} '
         '--regionsFileName {params.genes} --outFileName {output.scaledGZ} '
