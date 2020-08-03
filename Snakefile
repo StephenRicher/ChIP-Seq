@@ -609,7 +609,7 @@ rule computeMatrixScaled:
         sortedRegions = 'deeptools/computeMatrix/genes-scaled.bed'
     params:
         binSize = 10,
-        regionBodyLength = 10000,
+        regionBodyLength = 5000,
         upstream = 2000,
         downstream = 2000,
         samplesLabel = ' '.join(BOUNDS),
@@ -642,8 +642,8 @@ rule computeMatrixReference:
         sortedRegions = 'deeptools/computeMatrix/genes-reference.bed'
     params:
         binSize = 10,
-        upstream = 2000,
-        downstream = 2000,
+        upstream = 5000,
+        downstream = 5000,
         samplesLabel = ' '.join(BOUNDS),
         genes = config['genome']['genes'],
         averageType = 'mean',
