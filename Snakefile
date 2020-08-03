@@ -646,7 +646,8 @@ rule computeMatrixReference:
         downstream = 2000,
         samplesLabel = ' '.join(BOUNDS),
         genes = config['genome']['genes'],
-        averageType = 'mean'
+        averageType = 'mean',
+        referencePoint = 'TSS'
     log:
         'logs/computeMatrix.log'
     conda:
@@ -654,11 +655,12 @@ rule computeMatrixReference:
     threads:
         THREADS
     shell:
-        'computeMatrix scale-regions --scoreFileName {input} '
+        'computeMatrix reference-point --scoreFileName {input} '
         '--regionsFileName {params.genes} --outFileName {output.referenceGZ} '
         '--outFileNameMatrix {output.reference} --skipZeros '
         '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
         '--averageTypeBins {params.averageType} '
+        '--referencePoint {params.referencePoint} '
         '--upstream {params.upstream} --downstream {params.downstream} '
         '--outFileSortedRegions {output.sortedRegions} '
         '--numberOfProcessors {threads} &> {log}'
