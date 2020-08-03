@@ -1,6 +1,6 @@
 import tempfile
 import pandas as pd
-from snake_setup import set_config
+from snake_setup import set_config, load_samples
 
 BASE = workflow.basedir
 
@@ -31,17 +31,9 @@ config = set_config(config, default_config)
 workdir: config['workdir']
 BUILD = config['genome']['build']
 THREADS = config['threads']
-DATA = pd.read_table(config['data'], sep = ',', dtype = {'rep' : str})
 
-# Validate read file input with wildcard definitions
-if not DATA['group'].str.match(r'[^\/\s.-]+').all():
-    sys.exit(f'Invalid group definition in {config["data"]}.')
-if not DATA['rep'].str.match(r'\d+').all():
-    sys.exit(f'Invalid replicate definition in {config["data"]}.')
-if not DATA['read'].str.match(r'R[12]').all():
-    sys.exit(f'Invalid read definition in {config["data"]}.')
-if not DATA['type'].str.match(r'input|bound').all():
-    sys.exit(f'Invalid read definition in {config["data"]}.')
+# Read path to samples in pandas
+DATA = load_samples(config['data'])
 
 if config['paired']:
     single_regex = '[^\/\s.-]+-\d+-(input|bound)-R[12]'
@@ -282,7 +274,7 @@ rule fixBAM:
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
-        'samtools fixmate -O bam -m {input} {output} &> {log}'
+        'samtools fixmate -O bam,level=0 -m {input} {output} &> {log}'
 
 
 rule sortBAM:
@@ -608,21 +600,23 @@ rule bamCompare:
         '--numberOfProcessors {threads} &> {log}'
 
 
-rule computeMatrix:
+rule computeMatrixScaled:
     input:
         expand('bigwig/{sample}-Input.bigwig', sample=BOUNDS)
     output:
         scaledGZ = 'deeptools/computeMatrix/matrix-scaled.gz',
         scaled = 'deeptools/computeMatrix/matrix-scaled.tab',
-        sortedRegions = 'deeptools/computeMatrix/genes.bed'
+        sortedRegions = 'deeptools/computeMatrix/genes-scaled.bed'
     params:
+        binSize = 10,
         regionBodyLength = 10000,
         upstream = 2000,
         downstream = 2000,
         samplesLabel = ' '.join(BOUNDS),
-        genes = config['genome']['genes']
+        genes = config['genome']['genes'],
+        averageType = 'mean'
     log:
-        'logs/computeMatrix.log'
+        'logs/computeMatrixScaled.log'
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
@@ -632,7 +626,39 @@ rule computeMatrix:
         '--regionsFileName {params.genes} --outFileName {output.scaledGZ} '
         '--outFileNameMatrix {output.scaled} --skipZeros '
         '--regionBodyLength {params.regionBodyLength} '
-        '--samplesLabel {params.samplesLabel} '
+        '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
+        '--averageTypeBins {params.averageType}'
+        '--upstream {params.upstream} --downstream {params.downstream} '
+        '--outFileSortedRegions {output.sortedRegions} '
+        '--numberOfProcessors {threads} &> {log}'
+
+
+rule computeMatrixReference:
+    input:
+        expand('bigwig/{sample}-Input.bigwig', sample=BOUNDS)
+    output:
+        referenceGZ = 'deeptools/computeMatrix/matrix-reference.gz',
+        reference = 'deeptools/computeMatrix/matrix-reference.tab',
+        sortedRegions = 'deeptools/computeMatrix/genes-reference.bed'
+    params:
+        binSize = 10,
+        upstream = 2000,
+        downstream = 2000,
+        samplesLabel = ' '.join(BOUNDS),
+        genes = config['genome']['genes'],
+        averageType = 'mean'
+    log:
+        'logs/computeMatrix.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        THREADS
+    shell:
+        'computeMatrix scale-regions --scoreFileName {input} '
+        '--regionsFileName {params.genes} --outFileName {output.referenceGZ} '
+        '--outFileNameMatrix {output.reference} --skipZeros '
+        '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
+        '--averageTypeBins {params.averageType}'
         '--upstream {params.upstream} --downstream {params.downstream} '
         '--outFileSortedRegions {output.sortedRegions} '
         '--numberOfProcessors {threads} &> {log}'
@@ -640,17 +666,17 @@ rule computeMatrix:
 
 rule plotProfile:
     input:
-        rules.computeMatrix.output.scaledGZ
+        'deeptools/computeMatrix/matrix-{mode}.gz'
     output:
-        plot = 'qc/deeptools/plotProfile.png',
-        data = 'qc/deeptools/plotProfile-data.tab',
-        bed = 'qc/deeptools/plotProfile-regions.bed'
+        plot = 'qc/deeptools/plotProfile-{mode}.png',
+        data = 'qc/deeptools/plotProfile-data-{mode}.tab',
+        bed = 'qc/deeptools/plotProfile-regions-{mode}.bed'
     params:
         dpi = 300,
         plotsPerRow = 2,
-        averageType = 'median',
+        averageType = 'mean',
     log:
-        'logs/plotProfile.log'
+        'logs/plotProfile-{mode}.log'
     conda:
         f'{ENVS}/deeptools.yaml'
     shell:
@@ -747,7 +773,8 @@ rule multiQC:
         'qc/deeptools/plotCoverage.tab',
         'qc/deeptools/plotFingerprint.png',
         'qc/deeptools/plotFingerprint.tab',
-        'qc/deeptools/plotProfile-data.tab',
+        expand('qc/deeptools/plotProfile-data-{mode}.tab',
+            mode=['reference', 'scaled']),
         expand('qc/samtools/stats/{sample_type}.stats.txt',
             sample_type=SAMPLES_TYPE),
         expand('qc/samtools/idxstats/{sample_type}.idxstats.txt',
