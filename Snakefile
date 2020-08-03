@@ -665,12 +665,12 @@ rule macs2:
         input = rules.mergeInput.output,
         bound = 'mapped/{sample}-bound.markdup.bam'
     output:
-        dir = directory('macs2/{sample}'),
         summits = 'macs2/{sample}/{sample}_summits.bed',
         narrowPeak = 'macs2/{sample}/{sample}_peaks.narrowPeak',
         xlsPeak = 'macs2/{sample}/{sample}_peaks.xls',
         model = 'macs2/{sample}/{sample}_model.r'
     params:
+        dir = directory('macs2/{sample}'),
         genomeSize = 2652783500
     log:
         'logs/macs/{sample}.log'
@@ -682,7 +682,7 @@ rule macs2:
 	      '--control {input.input} '
  	      '--format BAM --gsize {params.genomeSize} '
 	      '--name {wildcards.sample} '
-	      '--outdir {output.dir} &> {log}'
+	      '--outdir {params.dir} &> {log}'
 
 
 rule samtoolsStats:
