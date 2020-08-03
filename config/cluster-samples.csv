@@ -1,0 +1,11 @@
+group,rep,read,type,path
+CD24Mid,1,R1,bound,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/1Bound.927.s_1.r_1.fq.gz
+CD24Mid,2,R1,input,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/4Bound.927.s_2.r_1.fq.gz
+CD24Mid,2,R1,bound,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/4Input.927.s_1.r_1.fq.gz
+CD24Mid,3,R1,bound,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/6Bound.927.s_2.r_1.fq.gz
+CD24Neg,1,R1,bound,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/2Bound.927.s_1.r_1.fq.gz
+CD24Neg,2,R1,bound,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/3Bound.927.s_1.r_1.fq.gz
+CD24Neg,3,R1,input,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/5Bound.927.s_1.r_1.fq.gz
+CD24Neg,3,R1,bound,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/5Input.927.s_2.r_1.fq.gz
+CD24Neg,4,R1,bound,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/7Bound.927.s_2.r_1.fq.gz
+CD24Neg,5,R1,bound,/home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/data/8Bound.927.s_2.r_1.fq.gz

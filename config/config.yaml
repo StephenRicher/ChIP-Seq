@@ -1,11 +1,11 @@
-data : /media/stephen/Data/20120810_LewisS_AM_MMhmeDIP/hmeDip-Seq/config/samples.csv
+workdir : /home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP
+threads : 16
+data : /home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/config/cluster-samples.csv
+paired : False
+genome :
+    build : GRCm38
+    sequence : /home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/genome/Mus_musculus.GRCm38.dna.primary_assembly.fa.gz
+    genes : /home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/genome/mm10-gencode_vm23.bed
+    blacklist : /home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/genome/mm10.blacklist.bed
 
-genome : /media/stephen/Data/genomes/GRCm38/Mus_musculus.GRCm38.dna.primary_assembly.fa.gz
-
-build : GRCm38
-
-annotation : /media/stephen/Data/genomes/GRCm38/annotation/Mus_musculus.GRCm38.99.gtf
-
-outdir : /media/stephen/Data/20120810_LewisS_AM_MMhmeDIP/hmeDip-Seq/analysis
-
-fastq_screen_config : /media/stephen/Data/20120810_LewisS_AM_MMhmeDIP/hmeDip-Seq/config/fastq_screen.config
+fastq_screen_config : /home/u/sr467/scratch/projects/20120810_LewisS_AM_MMhmeDIP/config/fastq_screen.config

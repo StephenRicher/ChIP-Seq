@@ -1,0 +1,22 @@
+__default__:
+  account: "free"
+  partition: "batch"
+  ntasks: 1
+  cpus-per-task: 16
+  job-name: "{rule}-%j"
+  mail-type: "ALL"
+  mail-user: "sr467@bath.ac.uk"
+  output: "slurm-%j-%x.out"
+  error: "slurm-%j-%x.err"
+  account : "free"
+  partition : "batch"
+  time : 60
+
+
+bowtie2Build:
+    time : 120
+
+bowtie2Map:
+    time : 120
+
+    
