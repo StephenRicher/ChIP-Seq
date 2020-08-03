@@ -1,37 +1,49 @@
 import tempfile
 import pandas as pd
+from snake_setup import set_config
 
 BASE = workflow.basedir
 
+# Define path to conda environment specifications
 ENVS = f'{BASE}/workflow/envs'
+# Defne path to custom scripts directory
 SCRIPTS = f'{BASE}/workflow/scripts'
 
-configfile : f'{BASE}/config/config.yaml'
-GENOME = config['genome']
-BUILD = config['build']
-FASTQ_SCREEN_CONFIG = config['fastq_screen_config']
+if not config:
+    configfile: f'{BASE}/config/config.yaml'
 
-try:
-    workdir : config['outdir']
-except KeyError:
-    pass
+# Defaults configuration file - use empty string to represent no default value.
+default_config = {
+    'workdir':           workflow.basedir,
+    'tmpdir':            tempfile.gettempdir(),
+    'threads':           1           ,
+    'data':              ''          ,
+    'paired':            ''          ,
+    'genome':
+        {'build':        'genome'    ,
+         'sequence':     ''          ,
+         'genes':        ''          ,
+         'blacklist':    None        ,},
+    'fastq_screen':      None,
+}
 
-DATA_TABLE = config['data']
+config = set_config(config, default_config)
+workdir: config['workdir']
+BUILD = config['genome']['build']
+
 DATA = pd.read_table(config['data'], sep = ',', dtype = {'rep' : str})
 
 # Validate read file input with wildcard definitions
 if not DATA['group'].str.match(r'[^\/\s.-]+').all():
-    sys.exit(f'Invalid group definition in {DATA_TABLE}.')
+    sys.exit(f'Invalid group definition in {config["data"]}.')
 if not DATA['rep'].str.match(r'\d+').all():
-    sys.exit(f'Invalid replicate definition in {DATA_TABLE}.')
+    sys.exit(f'Invalid replicate definition in {config["data"]}.')
 if not DATA['read'].str.match(r'R[12]').all():
-    sys.exit(f'Invalid read definition in {DATA_TABLE}.')
+    sys.exit(f'Invalid read definition in {config["data"]}.')
 if not DATA['type'].str.match(r'input|bound').all():
-    sys.exit(f'Invalid read definition in {DATA_TABLE}.')
+    sys.exit(f'Invalid read definition in {config["data"]}.')
 
-paired = False
-
-if paired:
+if config['paired']:
     single_regex = '[^\/\s.-]+-\d+-(input|bound)-R[12]'
     DATA['single'] = (DATA[['group', 'rep', 'type', 'read']]
         .apply(lambda x: '-'.join(x), axis = 1))
@@ -105,7 +117,7 @@ rule all:
 
 rule bgzipGenome:
     input:
-        GENOME
+        config['genome']['sequence']
     output:
         f'genome/{BUILD}.fa.gz'
     log:
@@ -191,22 +203,23 @@ rule modifyCutadapt:
             '-f {SCRIPTS}/modify_cutadapt.awk {input} > {output} 2> {log}'
 
 
-rule fastqScreen:
-    input:
-        'fastq/trimmed/{single}.trim.fastq.gz'
-    output:
-        txt = 'qc/fastq_screen/{single}.fastq_screen.txt',
-        png = 'qc/fastq_screen/{single}.fastq_screen.png'
-    params:
-        fastq_screen_config = FASTQ_SCREEN_CONFIG,
-        subset = 100000,
-        aligner = 'bowtie2'
-    log:
-        'logs/fastq_screen/{single}.log'
-    threads:
-        workflow.cores
-    wrapper:
-        "0.49.0/bio/fastq_screen"
+if config['fastq_screen'] is not None:
+    rule fastqScreen:
+        input:
+            'fastq/trimmed/{single}.trim.fastq.gz'
+        output:
+            txt = 'qc/fastq_screen/{single}.fastq_screen.txt',
+            png = 'qc/fastq_screen/{single}.fastq_screen.png'
+        params:
+            fastq_screen_config = config['fastq_screen'],
+            subset = 100000,
+            aligner = 'bowtie2'
+        log:
+            'logs/fastq_screen/{single}.log'
+        threads:
+            workflow.cores
+        wrapper:
+            "0.49.0/bio/fastq_screen"
 
 
 rule fastqcTrimmed:
@@ -247,7 +260,7 @@ rule bowtie2Map:
         sam = pipe('mapped/{sample_type}.sam'),
         qc = 'qc/bowtie2/{sample_type}.bowtie2.txt'
     params:
-        index = f'genome/index/{config["build"]}'
+        index = f'genome/index/{BUILD}'
     group:
         'map'
     log:
@@ -309,11 +322,8 @@ rule markdupBAM:
         '-s -f {output.qc} {input} {output.bam} &> {log}'
 
 
-blacklist = '/media/stephen/Data/20120810_LewisS_AM_MMhmeDIP/hmeDip-Seq/mm10.blacklist-merged.bed'
-# This will reduce the effectiveGenomeSize
-
 def setBlacklistCommand():
-    if blacklist:
+    if config['genome']['blacklist']:
         cmd = ('bedtools merge -d {params.distance} -i {input} '
                '> {output} 2> {log}')
     else:
@@ -323,7 +333,7 @@ def setBlacklistCommand():
 
 rule processBlacklist:
     input:
-        blacklist if blacklist else []
+        config['genome']['blacklist'] if config['genome']['blacklist'] else []
     output:
         f'genome/{BUILD}-blacklist.bed'
     params:
@@ -348,7 +358,7 @@ rule estimateReadFiltering:
         minMapQ = 15,
         binSize = 10000,
         distanceBetweenBins = 0,
-        properPair = '--samFlagInclude 2' if paired else '',
+        properPair = '--samFlagInclude 2' if config['paired'] else '',
     log:
         'logs/estimateReadFiltering/{sample_type}.log'
     conda:
@@ -375,7 +385,7 @@ rule alignmentSieve:
     params:
         minMapQ = 15,
         maxFragmentLength = 2000,
-        properPair = '--samFlagInclude 2' if paired else '',
+        properPair = '--samFlagInclude 2' if config['paired'] else '',
     log:
         'logs/alignmentSieve/{sample_type}.log'
     conda:
@@ -582,7 +592,7 @@ rule bamCompare:
     output:
         'bigwig/{sample}-Input.bigwig',
     params:
-        binSize = 50,
+        binSize = 1000,
         scale = 'SES',
         extendReads = 150,
         operation = 'log2',
@@ -613,7 +623,7 @@ rule computeMatrix:
         upstream = 2000,
         downstream = 2000,
         samplesLabel = ' '.join(BOUNDS),
-        genes = '/media/stephen/Data/20120810_LewisS_AM_MMhmeDIP/hmeDip-Seq/mm10-gencode_vm23.bed'
+        genes = config['genome']['genes']
     log:
         'logs/computeMatrix.log'
     conda:
@@ -665,8 +675,6 @@ rule macs2:
         model = 'macs2/{sample}/{sample}_model.r'
     params:
         genomeSize = 2652783500
-    threads:
-        6
     log:
         'logs/macs/{sample}.log'
     conda:
@@ -725,7 +733,7 @@ rule multiQC:
         expand('qc/fastqc/{single}.raw_fastqc.zip',
             single= DATA['single']),
         expand('qc/fastq_screen/{single}.fastq_screen.txt',
-            single=DATA['single']),
+            single=DATA['single']) if config['fastq_screen'] else [],
         expand('qc/cutadapt/{single}.cutadapt.txt',
             single=DATA['single']),
         expand('qc/fastqc/{single}.trim_fastqc.zip',
