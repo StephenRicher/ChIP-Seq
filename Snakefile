@@ -27,13 +27,11 @@ default_config = {
     'fastq_screen':      None,
 }
 
-
 config = set_config(config, default_config)
 workdir: config['workdir']
 BUILD = config['genome']['build']
 THREADS = config['threads']
 DATA = pd.read_table(config['data'], sep = ',', dtype = {'rep' : str})
-
 
 # Validate read file input with wildcard definitions
 if not DATA['group'].str.match(r'[^\/\s.-]+').all():
@@ -591,7 +589,7 @@ rule bamCompare:
     output:
         'bigwig/{sample}-Input.bigwig',
     params:
-        binSize = 1000,
+        binSize = 10,
         scale = 'SES',
         extendReads = 150,
         operation = 'log2',
