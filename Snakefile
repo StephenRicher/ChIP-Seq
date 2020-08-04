@@ -680,11 +680,12 @@ rule plotProfile:
     input:
         'deeptools/computeMatrix/matrix-{mode}.gz'
     output:
-        plot = 'qc/deeptools/compareInput/plotProfile-{mode}.png',
-        data = 'qc/deeptools/compareInput/plotProfile-data-{mode}.tab',
-        bed = 'qc/deeptools/compareInput/plotProfile-regions-{mode}.bed'
+        plot = 'qc/deeptools/compareInput/plotProfileInput-{mode}.png',
+        data = 'qc/deeptools/compareInput/plotProfileInput-data-{mode}.tab',
+        bed = 'qc/deeptools/compareInput/plotProfileInput-regions-{mode}.bed'
     params:
         dpi = 300,
+        kmeans = 3,
         plotsPerRow = 2,
         averageType = 'mean',
         referencePoint = 'TSS'
@@ -696,7 +697,7 @@ rule plotProfile:
         'plotProfile --matrixFile {input} --outFileName {output.plot} '
         '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
         '--dpi {params.dpi} --averageType {params.averageType} '
-        '--refPointLabel {params.referencePoint} '
+        '--refPointLabel {params.referencePoint} --kmeans {params.kmeans} '
         '--numPlotsPerRow {params.plotsPerRow} &> {log}'
 
 
@@ -704,16 +705,16 @@ rule plotHeatmap:
     input:
         'deeptools/computeMatrix/matrix-{mode}.gz'
     output:
-        plot = 'qc/deeptools/compareInput/plotHeatmap-{mode}.png',
-        data = 'qc/deeptools/compareInput/plotHeatmap-data-{mode}.tab',
-        bed = 'qc/deeptools/compareInput/plotHeatmap-regions-{mode}.bed'
+        plot = 'qc/deeptools/compareInput/plotHeatmapInput-{mode}.png',
+        data = 'qc/deeptools/compareInput/plotHeatmapInput-data-{mode}.tab',
+        bed = 'qc/deeptools/compareInput/plotHeatmapInput-regions-{mode}.bed'
     params:
         dpi = 300,
         zMax = 3,
         zMin = -3,
         kmeans = 3,
-        width = min(4, len(BOUNDS) * (4/3)),
-        colorMap = 'RdBu',
+        width = max(4, len(BOUNDS) * 2),
+        colorMap = 'RdBu_r',
         averageType = 'mean',
         referencePoint = 'TSS',
         interpolationMethod = 'auto'
@@ -864,11 +865,12 @@ rule plotProfileGroups:
     input:
         'deeptools/computeMatrixGroups/matrix-{mode}.gz'
     output:
-        plot = 'qc/deeptools/compareGroup/plotProfile-{mode}.png',
-        data = 'qc/deeptools/compareGroup/plotProfile-data-{mode}.tab',
-        bed = 'qc/deeptools/compareGroup/plotProfile-regions-{mode}.bed'
+        plot = 'qc/deeptools/compareGroup/plotProfileGroup-{mode}.png',
+        data = 'qc/deeptools/compareGroup/plotProfileGroup-data-{mode}.tab',
+        bed = 'qc/deeptools/compareGroup/plotProfileGroup-regions-{mode}.bed'
     params:
         dpi = 300,
+        kmeans = 3.
         plotsPerRow = 2,
         averageType = 'mean',
         referencePoint = 'TSS'
@@ -880,7 +882,7 @@ rule plotProfileGroups:
         'plotProfile --matrixFile {input} --outFileName {output.plot} '
         '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
         '--dpi {params.dpi} --averageType {params.averageType} '
-        '--refPointLabel {params.referencePoint} '
+        '--refPointLabel {params.referencePoint}  --kmeans {params.kmeans} '
         '--numPlotsPerRow {params.plotsPerRow} &> {log}'
 
 
@@ -888,16 +890,16 @@ rule plotHeatmapGroups:
     input:
         'deeptools/computeMatrixGroups/matrix-{mode}.gz'
     output:
-        plot = 'qc/deeptools/compareGroup/plotHeatmap-{mode}.png',
-        data = 'qc/deeptools/compareGroup/plotHeatmap-data-{mode}.tab',
-        bed = 'qc/deeptools/compareGroup/plotHeatmap-regions-{mode}.bed'
+        plot = 'qc/deeptools/compareGroup/plotHeatmapGroup-{mode}.png',
+        data = 'qc/deeptools/compareGroup/plotHeatmapGroup-data-{mode}.tab',
+        bed = 'qc/deeptools/compareGroup/plotHeatmapGroup-regions-{mode}.bed'
     params:
         dpi = 300,
         zMax = 3,
         zMin = -3,
         kmeans = 3,
-        width = min(4, len(BOUNDS) * (4/3)),
-        colorMap = 'RdBu',
+        width = max(4, len(BOUNDS) * 2),
+        colorMap = 'RdBu_r',
         averageType = 'mean',
         referencePoint = 'TSS',
         interpolationMethod = 'auto'
