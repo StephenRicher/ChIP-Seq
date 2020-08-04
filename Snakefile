@@ -109,9 +109,9 @@ wildcard_constraints:
 rule all:
     input:
         ['qc/multiqc', f'genome/{BUILD}.fa.gz.fai',
-          expand('qc/deeptools/{compare}/plot{type}-{mode}.png',
+          expand('qc/deeptools/compare{compare}/plot{type}{compare}-{mode}.png',
             mode=['scaled', 'reference'], type=['Heatmap', 'Profile'],
-            compare=['compareInput', 'compareGroup'])]
+            compare=['Input', 'Group'])]
 
 rule bgzipGenome:
     input:
@@ -870,7 +870,7 @@ rule plotProfileGroups:
         bed = 'qc/deeptools/compareGroup/plotProfileGroup-regions-{mode}.bed'
     params:
         dpi = 300,
-        kmeans = 3.
+        kmeans = 3,
         plotsPerRow = 2,
         averageType = 'mean',
         referencePoint = 'TSS'
@@ -1070,8 +1070,8 @@ rule multiQC:
         'qc/deeptools/plotCoverage.tab',
         'qc/deeptools/plotFingerprint.png',
         'qc/deeptools/plotFingerprint.tab',
-        'qc/deeptools/compareInput/plotProfile-data-scaled.tab',
-        'qc/deeptools/compareGroup/plotProfile-data-scaled.tab',
+        'qc/deeptools/compareInput/plotProfileInput-data-scaled.tab',
+        'qc/deeptools/compareGroup/plotProfileGroup-data-scaled.tab',
         'qc/deeptools/plotEnrichment.tab',
         expand('qc/samtools/stats/{sample_type}.stats.txt',
             sample_type=SAMPLES_TYPE),
