@@ -1,3 +1,4 @@
+import math
 import tempfile
 import pandas as pd
 from snake_setup import set_config, load_samples
@@ -753,6 +754,68 @@ rule macs2:
 	      '--outdir {params.dir} &> {log}'
 
 
+rule consensusPeaks:
+    input:
+        lambda wc: expand(
+            'macs2/{group}-{rep}/{group}-{rep}_peaks.narrowPeak',
+            group=wc.group, rep=GROUPS[wc.group])
+    output:
+        'macs2/{group}-consensus_peaks.narrowPeak'
+    params:
+        # Mininium replicates required to retain peak
+        min = lambda wc: math.ceil(len(GROUPS[wc.group]) / 2)
+    log:
+        'logs/consensusPeaks/{group}.log'
+    conda:
+        f'{ENVS}/bedtools.yaml'
+    shell:
+        'bedtools multiinter -i {input} '
+        "| awk -v n={params.min} '{{if ($4 >= n) {{print}}}}' "
+        "> {output} 2> {log}"
+
+
+rule intersectConsensus:
+    input:
+        expand('macs2/{group}-consensus_peaks.narrowPeak',
+            group=list(GROUPS)),
+    output:
+        'macs2/consensus/all-consensus_peaks.narrowPeak'
+    log:
+        f'logs/intersectConsensus.log'
+    conda:
+        f'{ENVS}/bedtools.yaml'
+    shell:
+        'bedtools multiinter -i {input} > {output} 2> {log}'
+
+
+rule plotEnrichment:
+    input:
+        bams = expand('mapped/{sample_type}.filtered.bam',
+            sample_type=SAMPLES_TYPE),
+        indexes = expand('mapped/{sample_type}.filtered.bam.bai',
+            sample_type=SAMPLES_TYPE),
+        peaks = rules.intersectConsensus.output
+    output:
+        plot = 'qc/deeptools/plotEnrichment.png',
+        data = 'qc/deeptools/plotEnrichment.tab'
+    params:
+        plotsPerRow = 2,
+        labels = ' '.join(SAMPLES_TYPE),
+        regionLabel = 'MACS2 consensus peaks'
+    log:
+        'logs/plotEnrichment.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        THREADS
+    shell:
+        'plotEnrichment --bamfiles {input.bams} --BED {input.peaks} '
+        '--plotFile {output.plot} --outRawCounts {output.data} '
+        '--labels {params.labels} --numPlotsPerRow {params.plotsPerRow} '
+        '--regionLabels "{params.regionLabel}" --numberOfProcessors {threads} '
+        '&> {log}'
+
+
 rule samtoolsStats:
     input:
         rules.markdupBAM.output.bam
@@ -816,6 +879,7 @@ rule multiQC:
         'qc/deeptools/plotFingerprint.png',
         'qc/deeptools/plotFingerprint.tab',
         'qc/deeptools/plotProfile-data-scaled.tab',
+        'qc/deeptools/plotEnrichment.tab',
         expand('qc/samtools/stats/{sample_type}.stats.txt',
             sample_type=SAMPLES_TYPE),
         expand('qc/samtools/idxstats/{sample_type}.idxstats.txt',
