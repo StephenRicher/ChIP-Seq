@@ -768,7 +768,7 @@ rule bamCompareGroups:
     input:
         group1 = 'mapped/{group1}-bound.filtered.bam',
         group1Index = 'mapped/{group1}-bound.filtered.bam.bai',
-        group2 = 'mapped/{group1}-bound.filtered.bam',
+        group2 = 'mapped/{group2}-bound.filtered.bam',
         group2Index = 'mapped/{group2}-bound.filtered.bam.bai',
     output:
         'bigwig/compareGroup/{group1}-{group2}.bigwig',
