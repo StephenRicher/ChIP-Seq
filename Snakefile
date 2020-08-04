@@ -1,5 +1,6 @@
 import math
 import tempfile
+import itertools
 import pandas as pd
 from snake_setup import set_config, load_samples
 
@@ -37,6 +38,7 @@ THREADS = config['threads']
 
 # Read path to samples in pandas
 DATA = load_samples(config['data'])
+
 
 if config['paired']:
     single_regex = '[^\/\s.-]+-\d+-(input|bound)-R[12]'
@@ -84,6 +86,9 @@ GROUPS = {}
 for group in DATA['group']:
     GROUPS[group] = list(DATA.loc[group]['rep'].unique())
 
+# Generate list of group comparisons - this avoids self comparison
+COMPARES = [f'{i[0]}-{i[1]}' for i in itertools.combinations(list(GROUPS), 2)]
+
 # Get group-rep-type for all samples
 SAMPLES_TYPE = list(DATA['sample_type'].unique())
 # Get group-rep for input samples
@@ -104,8 +109,9 @@ wildcard_constraints:
 rule all:
     input:
         ['qc/multiqc', f'genome/{BUILD}.fa.gz.fai',
-          expand('qc/deeptools/plot{type}-{mode}.png',
-            mode=['scaled', 'reference'], type=['Heatmap', 'Profile'])]
+          expand('qc/deeptools/{compare}/plot{type}-{mode}.png',
+            mode=['scaled', 'reference'], type=['Heatmap', 'Profile'],
+            compare=['compareInput', 'compareGroup'])]
 
 rule bgzipGenome:
     input:
@@ -551,7 +557,7 @@ rule mergeInput:
     input:
         expand('mapped/{sample}-input.markdup.bam',sample=INPUTS)
     output:
-        'mapped/all-input.sort.bam'
+        'mapped/input/all-input.sort.bam'
     log:
         'logs/mergeInput.log'
     conda:
@@ -582,7 +588,7 @@ rule bamCompare:
         control = rules.mergeInput.output,
         controlIndex = rules.indexInputBAM.output,
     output:
-        'bigwig/{sample}-Input.bigwig',
+        'bigwig/compareInput/{sample}-Input.bigwig',
     params:
         binSize = 10,
         scale = 'SES',
@@ -605,7 +611,7 @@ rule bamCompare:
 
 rule computeMatrixScaled:
     input:
-        expand('bigwig/{sample}-Input.bigwig', sample=BOUNDS)
+        expand('bigwig/compareInput/{sample}-Input.bigwig', sample=BOUNDS)
     output:
         scaledGZ = 'deeptools/computeMatrix/matrix-scaled.gz',
         scaled = 'deeptools/computeMatrix/matrix-scaled.tab',
@@ -639,7 +645,7 @@ rule computeMatrixScaled:
 
 rule computeMatrixReference:
     input:
-        expand('bigwig/{sample}-Input.bigwig', sample=BOUNDS)
+        expand('bigwig/compareInput/{sample}-Input.bigwig', sample=BOUNDS)
     output:
         referenceGZ = 'deeptools/computeMatrix/matrix-reference.gz',
         reference = 'deeptools/computeMatrix/matrix-reference.tab',
@@ -674,9 +680,9 @@ rule plotProfile:
     input:
         'deeptools/computeMatrix/matrix-{mode}.gz'
     output:
-        plot = 'qc/deeptools/plotProfile-{mode}.png',
-        data = 'qc/deeptools/plotProfile-data-{mode}.tab',
-        bed = 'qc/deeptools/plotProfile-regions-{mode}.bed'
+        plot = 'qc/deeptools/compareInput/plotProfile-{mode}.png',
+        data = 'qc/deeptools/compareInput/plotProfile-data-{mode}.tab',
+        bed = 'qc/deeptools/compareInput/plotProfile-regions-{mode}.bed'
     params:
         dpi = 300,
         plotsPerRow = 2,
@@ -698,21 +704,205 @@ rule plotHeatmap:
     input:
         'deeptools/computeMatrix/matrix-{mode}.gz'
     output:
-        plot = 'qc/deeptools/plotHeatmap-{mode}.png',
-        data = 'qc/deeptools/plotHeatmap-data-{mode}.tab',
-        bed = 'qc/deeptools/plotHeatmap-regions-{mode}.bed'
+        plot = 'qc/deeptools/compareInput/plotHeatmap-{mode}.png',
+        data = 'qc/deeptools/compareInput/plotHeatmap-data-{mode}.tab',
+        bed = 'qc/deeptools/compareInput/plotHeatmap-regions-{mode}.bed'
     params:
         dpi = 300,
         zMax = 3,
         zMin = -3,
         kmeans = 3,
-        width = f'{len(BOUNDS) * (4/3)}',
+        width = min(4, len(BOUNDS) * (4/3)),
         colorMap = 'RdBu',
         averageType = 'mean',
         referencePoint = 'TSS',
         interpolationMethod = 'auto'
     log:
         'logs/plotHeatmap-{mode}.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        THREADS
+    shell:
+        'plotHeatmap --matrixFile {input} --outFileName {output.plot} '
+        '--outFileSortedRegions {output.bed} --outFileNameMatrix {output.data} '
+        '--interpolationMethod {params.interpolationMethod} '
+        '--dpi {params.dpi} --kmeans {params.kmeans} '
+        '--zMin {params.zMin} --zMax {params.zMax} '
+        '--colorMap {params.colorMap} --refPointLabel {params.referencePoint} '
+        '--averageTypeSummaryPlot {params.averageType} '
+        '--heatmapWidth {params.width} '
+        '--refPointLabel {params.referencePoint} &> {log}'
+
+
+rule mergeReplicates:
+    input:
+        lambda wc: expand('mapped/{group}-{rep}-bound.filtered.bam',
+            group=wc.group, rep=GROUPS[wc.group])
+    output:
+        'mapped/{group}-bound.filtered.bam'
+    log:
+        'logs/mergeReplicates/{group}.log'
+    conda:
+        f'{ENVS}/samtools.yaml'
+    shell:
+        'samtools merge {output} {input} &> {log}'
+
+
+rule indexMergedReplicates:
+    input:
+        rules.mergeReplicates.output
+    output:
+        f'{rules.mergeReplicates.output}.bai'
+    log:
+        'logs/indexMergedReplicates/{group}.log'
+    conda:
+        f'{ENVS}/samtools.yaml'
+    threads:
+        THREADS
+    shell:
+        'samtools index -@ {threads} {input} &> {log}'
+
+
+rule bamCompareGroups:
+    input:
+        group1 = 'mapped/{group1}-bound.filtered.bam',
+        group1Index = 'mapped/{group1}-bound.filtered.bam.bai',
+        group2 = 'mapped/{group1}-bound.filtered.bam',
+        group2Index = 'mapped/{group2}-bound.filtered.bam.bai',
+    output:
+        'bigwig/compareGroup/{group1}-{group2}.bigwig',
+    params:
+        binSize = 10,
+        scale = 'SES',
+        extendReads = 150,
+        operation = 'log2',
+        genomeSize = 2652783500,
+    log:
+        'logs/bamCompareGroups/{group1}-{group2}.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        THREADS
+    shell:
+        'bamCompare --bamfile1 {input.group1} --bamfile2 {input.group2} '
+        '--outFileName {output} --binSize {params.binSize} '
+        '--extendReads {params.extendReads} --operation {params.operation} '
+        '--effectiveGenomeSize {params.genomeSize} '
+        '--numberOfProcessors {threads} &> {log}'
+
+
+rule computeMatrixScaledGroups:
+    input:
+        expand('bigwig/compareGroup/{group_compare}.bigwig',
+            group_compare=COMPARES)
+    output:
+        scaledGZ = 'deeptools/computeMatrixGroups/matrix-scaled.gz',
+        scaled = 'deeptools/computeMatrixGroups/matrix-scaled.tab',
+        sortedRegions = 'deeptools/computeMatrixGroups/genes-scaled.bed'
+    params:
+        binSize = 10,
+        regionBodyLength = 5000,
+        upstream = 2000,
+        downstream = 2000,
+        metagene = '--metagene' if config['computeMatrixScale']['exon'] else '',
+        samplesLabel = ' '.join(COMPARES),
+        genes = config['genome']['genes'],
+        averageType = 'mean'
+    log:
+        'logs/computeMatrixScaledGroups.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        THREADS
+    shell:
+        'computeMatrix scale-regions --scoreFileName {input} '
+        '--regionsFileName {params.genes} --outFileName {output.scaledGZ} '
+        '--outFileNameMatrix {output.scaled} --skipZeros '
+        '--regionBodyLength {params.regionBodyLength} '
+        '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
+        '--averageTypeBins {params.averageType} {params.metagene} '
+        '--upstream {params.upstream} --downstream {params.downstream} '
+        '--outFileSortedRegions {output.sortedRegions} '
+        '--numberOfProcessors {threads} &> {log}'
+
+
+rule computeMatrixReferenceGroups:
+    input:
+        expand('bigwig/compareGroup/{group_compare}.bigwig',
+            group_compare=COMPARES)
+    output:
+        referenceGZ = 'deeptools/computeMatrixGroups/matrix-reference.gz',
+        reference = 'deeptools/computeMatrixGroups/matrix-reference.tab',
+        sortedRegions = 'deeptools/computeMatrixGroups/genes-reference.bed'
+    params:
+        binSize = 10,
+        upstream = 5000,
+        downstream = 5000,
+        samplesLabel = ' '.join(COMPARES),
+        genes = config['genome']['genes'],
+        averageType = 'mean',
+        referencePoint = 'TSS'
+    log:
+        'logs/computeMatrixReferenceGroups.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        THREADS
+    shell:
+        'computeMatrix reference-point --scoreFileName {input} '
+        '--regionsFileName {params.genes} --outFileName {output.referenceGZ} '
+        '--outFileNameMatrix {output.reference} --skipZeros '
+        '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
+        '--averageTypeBins {params.averageType} '
+        '--referencePoint {params.referencePoint} '
+        '--upstream {params.upstream} --downstream {params.downstream} '
+        '--outFileSortedRegions {output.sortedRegions} '
+        '--numberOfProcessors {threads} &> {log}'
+
+rule plotProfileGroups:
+    input:
+        'deeptools/computeMatrixGroups/matrix-{mode}.gz'
+    output:
+        plot = 'qc/deeptools/compareGroup/plotProfile-{mode}.png',
+        data = 'qc/deeptools/compareGroup/plotProfile-data-{mode}.tab',
+        bed = 'qc/deeptools/compareGroup/plotProfile-regions-{mode}.bed'
+    params:
+        dpi = 300,
+        plotsPerRow = 2,
+        averageType = 'mean',
+        referencePoint = 'TSS'
+    log:
+        'logs/plotProfileGroups-{mode}.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    shell:
+        'plotProfile --matrixFile {input} --outFileName {output.plot} '
+        '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
+        '--dpi {params.dpi} --averageType {params.averageType} '
+        '--refPointLabel {params.referencePoint} '
+        '--numPlotsPerRow {params.plotsPerRow} &> {log}'
+
+
+rule plotHeatmapGroups:
+    input:
+        'deeptools/computeMatrixGroups/matrix-{mode}.gz'
+    output:
+        plot = 'qc/deeptools/compareGroup/plotHeatmap-{mode}.png',
+        data = 'qc/deeptools/compareGroup/plotHeatmap-data-{mode}.tab',
+        bed = 'qc/deeptools/compareGroup/plotHeatmap-regions-{mode}.bed'
+    params:
+        dpi = 300,
+        zMax = 3,
+        zMin = -3,
+        kmeans = 3,
+        width = min(4, len(BOUNDS) * (4/3)),
+        colorMap = 'RdBu',
+        averageType = 'mean',
+        referencePoint = 'TSS',
+        interpolationMethod = 'auto'
+    log:
+        'logs/plotHeatmapGroups-{mode}.log'
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
@@ -878,7 +1068,8 @@ rule multiQC:
         'qc/deeptools/plotCoverage.tab',
         'qc/deeptools/plotFingerprint.png',
         'qc/deeptools/plotFingerprint.tab',
-        'qc/deeptools/plotProfile-data-scaled.tab',
+        'qc/deeptools/compareInput/plotProfile-data-scaled.tab',
+        'qc/deeptools/compareGroup/plotProfile-data-scaled.tab',
         'qc/deeptools/plotEnrichment.tab',
         expand('qc/samtools/stats/{sample_type}.stats.txt',
             sample_type=SAMPLES_TYPE),
