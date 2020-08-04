@@ -685,7 +685,6 @@ rule plotProfile:
         bed = 'qc/deeptools/compareInput/plotProfileInput-regions-{mode}.bed'
     params:
         dpi = 300,
-        kmeans = 3,
         plotsPerRow = 2,
         averageType = 'mean',
         referencePoint = 'TSS'
@@ -697,7 +696,7 @@ rule plotProfile:
         'plotProfile --matrixFile {input} --outFileName {output.plot} '
         '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
         '--dpi {params.dpi} --averageType {params.averageType} '
-        '--refPointLabel {params.referencePoint} --kmeans {params.kmeans} '
+        '--refPointLabel {params.referencePoint} '
         '--numPlotsPerRow {params.plotsPerRow} &> {log}'
 
 
@@ -870,7 +869,6 @@ rule plotProfileGroups:
         bed = 'qc/deeptools/compareGroup/plotProfileGroup-regions-{mode}.bed'
     params:
         dpi = 300,
-        kmeans = 3,
         plotsPerRow = 2,
         averageType = 'mean',
         referencePoint = 'TSS'
@@ -882,7 +880,7 @@ rule plotProfileGroups:
         'plotProfile --matrixFile {input} --outFileName {output.plot} '
         '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
         '--dpi {params.dpi} --averageType {params.averageType} '
-        '--refPointLabel {params.referencePoint}  --kmeans {params.kmeans} '
+        '--refPointLabel {params.referencePoint} '
         '--numPlotsPerRow {params.plotsPerRow} &> {log}'
 
 
