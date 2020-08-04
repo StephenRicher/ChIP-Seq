@@ -19,6 +19,8 @@ default_config = {
     'threads':           workflow.cores       ,
     'data':              ''          ,
     'paired':            ''          ,
+    'computeMatrixScale':
+        {'exon':         True        ,},
     'genome':
         {'build':        'genome'    ,
          'sequence':     ''          ,
@@ -101,8 +103,8 @@ wildcard_constraints:
 rule all:
     input:
         ['qc/multiqc', f'genome/{BUILD}.fa.gz.fai',
-         expand('macs2/{sample}/{sample}_summits.bed', sample=BOUNDS),
-         'deeptools/computeMatrix/matrix-scaled.gz']
+          expand('qc/deeptools/plot{type}-{mode}.png',
+            mode=['scaled', 'reference'], type=['Heatmap', 'Profile'])]
 
 rule bgzipGenome:
     input:
@@ -612,6 +614,7 @@ rule computeMatrixScaled:
         regionBodyLength = 5000,
         upstream = 2000,
         downstream = 2000,
+        metagene = '--metagene' if config['computeMatrixScale']['exon'] else '',
         samplesLabel = ' '.join(BOUNDS),
         genes = config['genome']['genes'],
         averageType = 'mean'
@@ -627,7 +630,7 @@ rule computeMatrixScaled:
         '--outFileNameMatrix {output.scaled} --skipZeros '
         '--regionBodyLength {params.regionBodyLength} '
         '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
-        '--averageTypeBins {params.averageType} '
+        '--averageTypeBins {params.averageType} {params.metagene} '
         '--upstream {params.upstream} --downstream {params.downstream} '
         '--outFileSortedRegions {output.sortedRegions} '
         '--numberOfProcessors {threads} &> {log}'
@@ -690,10 +693,45 @@ rule plotProfile:
         '--numPlotsPerRow {params.plotsPerRow} &> {log}'
 
 
+rule plotHeatmap:
+    input:
+        'deeptools/computeMatrix/matrix-{mode}.gz'
+    output:
+        plot = 'qc/deeptools/plotHeatmap-{mode}.png',
+        data = 'qc/deeptools/plotHeatmap-data-{mode}.tab',
+        bed = 'qc/deeptools/plotHeatmap-regions-{mode}.bed'
+    params:
+        dpi = 300,
+        zMax = 3,
+        zMin = -3,
+        kmeans = 3,
+        width = f'{len(BOUNDS) * (4/3)}',
+        colorMap = 'RdBu',
+        averageType = 'mean',
+        referencePoint = 'TSS',
+        interpolationMethod = 'auto'
+    log:
+        'logs/plotHeatmap-{mode}.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        THREADS
+    shell:
+        'plotProfile --matrixFile {input} --outFileName {output.plot} '
+        '--outFileSortedRegions {output.bed} --outFileNameMatrix {output.data} '
+        '--interpolationMethod {params.interpolationMethod} '
+        '--dpi {params.dpi} --kmeans {params.kmeans} '
+        '--zMin {params.zMin} --zMax {params.zMax} '
+        '--colorMap {params.colorMap} --refPointLabel {params.referencePoint} '
+        '--averageTypeSummaryPlot {params.averageType} '
+        '--heatmapWidth {params.width} '
+        '--refPointLabel {params.referencePoint} &> {log}'
+
+
 rule macs2:
     input:
         input = rules.mergeInput.output,
-        bound = 'mapped/{sample}-bound.markdup.bam'
+        bound = 'mapped/{sample}-bound.filtered.bam'
     output:
         summits = 'macs2/{sample}/{sample}_summits.bed',
         narrowPeak = 'macs2/{sample}/{sample}_peaks.narrowPeak',
@@ -777,8 +815,7 @@ rule multiQC:
         'qc/deeptools/plotCoverage.tab',
         'qc/deeptools/plotFingerprint.png',
         'qc/deeptools/plotFingerprint.tab',
-        expand('qc/deeptools/plotProfile-data-{mode}.tab',
-            mode=['reference', 'scaled']),
+        'qc/deeptools/plotProfile-data-scaled.tab',
         expand('qc/samtools/stats/{sample_type}.stats.txt',
             sample_type=SAMPLES_TYPE),
         expand('qc/samtools/idxstats/{sample_type}.idxstats.txt',
