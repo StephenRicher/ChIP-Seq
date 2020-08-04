@@ -718,7 +718,7 @@ rule plotHeatmap:
     threads:
         THREADS
     shell:
-        'plotProfile --matrixFile {input} --outFileName {output.plot} '
+        'plotHeatmap --matrixFile {input} --outFileName {output.plot} '
         '--outFileSortedRegions {output.bed} --outFileNameMatrix {output.data} '
         '--interpolationMethod {params.interpolationMethod} '
         '--dpi {params.dpi} --kmeans {params.kmeans} '
@@ -889,7 +889,7 @@ rule multiQC:
     output:
         directory('qc/multiqc')
     log:
-        'logs/multiqc/multiqc.log'
+        'logs/multiqc.log'
     conda:
         f'{ENVS}/multiqc.yaml'
     shell:
