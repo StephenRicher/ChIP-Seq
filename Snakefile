@@ -677,6 +677,7 @@ rule plotProfile:
         dpi = 300,
         plotsPerRow = 2,
         averageType = 'mean',
+        referencePoint = 'TSS'
     log:
         'logs/plotProfile-{mode}.log'
     conda:
@@ -685,6 +686,7 @@ rule plotProfile:
         'plotProfile --matrixFile {input} --outFileName {output.plot} '
         '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
         '--dpi {params.dpi} --averageType {params.averageType} '
+        '--refPointLabel {params.referencePoint} '
         '--numPlotsPerRow {params.plotsPerRow} &> {log}'
 
 
