@@ -991,7 +991,8 @@ rule plotEnrichment:
     params:
         plotsPerRow = 2,
         labels = ' '.join(SAMPLES_TYPE),
-        regionLabel = 'MACS2 consensus peaks'
+        genes = config['genome']['genes'],
+        regionLabel = '"MACS2 consensus peaks" "Gene features"'
     log:
         'logs/plotEnrichment.log'
     conda:
@@ -999,10 +1000,11 @@ rule plotEnrichment:
     threads:
         THREADS
     shell:
-        'plotEnrichment --bamfiles {input.bams} --BED {input.peaks} '
+        'plotEnrichment --bamfiles {input.bams} '
+        '--BED {input.peaks} {params.genes} '
         '--plotFile {output.plot} --outRawCounts {output.data} '
         '--labels {params.labels} --numPlotsPerRow {params.plotsPerRow} '
-        '--regionLabels "{params.regionLabel}" --numberOfProcessors {threads} '
+        '--regionLabels {params.regionLabel} --numberOfProcessors {threads} '
         '&> {log}'
 
 
