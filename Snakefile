@@ -552,187 +552,187 @@ rule plotFingerprint:
         '--numberOfSamples {params.nSamples} --skipZeros '
         '--numberOfProcessors {threads} &> {log}'
 
-
-rule mergeInput:
-    input:
-        expand('mapped/{sample}-input.markdup.bam',sample=INPUTS)
-    output:
-        'mapped/input/all-input.sort.bam'
-    log:
-        'logs/mergeInput.log'
-    conda:
-        f'{ENVS}/samtools.yaml'
-    shell:
-        'samtools merge {output} {input} &> {log}'
-
-
-rule indexInputBAM:
-    input:
-        rules.mergeInput.output
-    output:
-        f'{rules.mergeInput.output}.bai'
-    log:
-        'logs/indexInputBAM.log'
-    conda:
-        f'{ENVS}/samtools.yaml'
-    threads:
-        THREADS
-    shell:
-        'samtools index -@ {threads} {input} &> {log}'
+if INPUTS:
+    rule mergeInput:
+        input:
+            expand('mapped/{sample}-input.markdup.bam',sample=INPUTS)
+        output:
+            'mapped/input/all-input.sort.bam'
+        log:
+            'logs/mergeInput.log'
+        conda:
+            f'{ENVS}/samtools.yaml'
+        shell:
+            'samtools merge {output} {input} &> {log}'
 
 
-rule bamCompare:
-    input:
-        treatment ='mapped/{sample}-bound.filtered.bam',
-        treatmentIndex = 'mapped/{sample}-bound.filtered.bam.bai',
-        control = rules.mergeInput.output,
-        controlIndex = rules.indexInputBAM.output,
-    output:
-        'bigwig/compareInput/{sample}-Input.bigwig',
-    params:
-        binSize = 10,
-        scale = 'SES',
-        extendReads = 150,
-        operation = 'log2',
-        genomeSize = 2652783500,
-    log:
-        'logs/bamCompare/{sample}.log'
-    conda:
-        f'{ENVS}/deeptools.yaml'
-    threads:
-        THREADS
-    shell:
-        'bamCompare --bamfile1 {input.treatment} --bamfile2 {input.control} '
-        '--outFileName {output} --binSize {params.binSize} '
-        '--extendReads {params.extendReads} --operation {params.operation} '
-        '--effectiveGenomeSize {params.genomeSize} '
-        '--numberOfProcessors {threads} &> {log}'
+    rule indexInputBAM:
+        input:
+            rules.mergeInput.output
+        output:
+            f'{rules.mergeInput.output}.bai'
+        log:
+            'logs/indexInputBAM.log'
+        conda:
+            f'{ENVS}/samtools.yaml'
+        threads:
+            THREADS
+        shell:
+            'samtools index -@ {threads} {input} &> {log}'
 
 
-rule computeMatrixScaled:
-    input:
-        expand('bigwig/compareInput/{sample}-Input.bigwig', sample=BOUNDS)
-    output:
-        scaledGZ = 'deeptools/computeMatrix/matrix-scaled.gz',
-        scaled = 'deeptools/computeMatrix/matrix-scaled.tab',
-        sortedRegions = 'deeptools/computeMatrix/genes-scaled.bed'
-    params:
-        binSize = 10,
-        regionBodyLength = 5000,
-        upstream = 2000,
-        downstream = 2000,
-        metagene = '--metagene' if config['computeMatrixScale']['exon'] else '',
-        samplesLabel = ' '.join(BOUNDS),
-        genes = config['genome']['genes'],
-        averageType = 'mean'
-    log:
-        'logs/computeMatrixScaled.log'
-    conda:
-        f'{ENVS}/deeptools.yaml'
-    threads:
-        THREADS
-    shell:
-        'computeMatrix scale-regions --scoreFileName {input} '
-        '--regionsFileName {params.genes} --outFileName {output.scaledGZ} '
-        '--outFileNameMatrix {output.scaled} --skipZeros '
-        '--regionBodyLength {params.regionBodyLength} '
-        '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
-        '--averageTypeBins {params.averageType} {params.metagene} '
-        '--upstream {params.upstream} --downstream {params.downstream} '
-        '--outFileSortedRegions {output.sortedRegions} '
-        '--numberOfProcessors {threads} &> {log}'
+    rule bamCompare:
+        input:
+            treatment ='mapped/{sample}-bound.filtered.bam',
+            treatmentIndex = 'mapped/{sample}-bound.filtered.bam.bai',
+            control = rules.mergeInput.output,
+            controlIndex = rules.indexInputBAM.output,
+        output:
+            'bigwig/compareInput/{sample}-Input.bigwig',
+        params:
+            binSize = 10,
+            scale = 'SES',
+            extendReads = 150,
+            operation = 'log2',
+            genomeSize = 2652783500,
+        log:
+            'logs/bamCompare/{sample}.log'
+        conda:
+            f'{ENVS}/deeptools.yaml'
+        threads:
+            THREADS
+        shell:
+            'bamCompare --bamfile1 {input.treatment} --bamfile2 {input.control} '
+            '--outFileName {output} --binSize {params.binSize} '
+            '--extendReads {params.extendReads} --operation {params.operation} '
+            '--effectiveGenomeSize {params.genomeSize} '
+            '--numberOfProcessors {threads} &> {log}'
 
 
-rule computeMatrixReference:
-    input:
-        expand('bigwig/compareInput/{sample}-Input.bigwig', sample=BOUNDS)
-    output:
-        referenceGZ = 'deeptools/computeMatrix/matrix-reference.gz',
-        reference = 'deeptools/computeMatrix/matrix-reference.tab',
-        sortedRegions = 'deeptools/computeMatrix/genes-reference.bed'
-    params:
-        binSize = 10,
-        upstream = 5000,
-        downstream = 5000,
-        samplesLabel = ' '.join(BOUNDS),
-        genes = config['genome']['genes'],
-        averageType = 'mean',
-        referencePoint = 'TSS'
-    log:
-        'logs/computeMatrix.log'
-    conda:
-        f'{ENVS}/deeptools.yaml'
-    threads:
-        THREADS
-    shell:
-        'computeMatrix reference-point --scoreFileName {input} '
-        '--regionsFileName {params.genes} --outFileName {output.referenceGZ} '
-        '--outFileNameMatrix {output.reference} --skipZeros '
-        '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
-        '--averageTypeBins {params.averageType} '
-        '--referencePoint {params.referencePoint} '
-        '--upstream {params.upstream} --downstream {params.downstream} '
-        '--outFileSortedRegions {output.sortedRegions} '
-        '--numberOfProcessors {threads} &> {log}'
+    rule computeMatrixScaled:
+        input:
+            expand('bigwig/compareInput/{sample}-Input.bigwig', sample=BOUNDS)
+        output:
+            scaledGZ = 'deeptools/computeMatrix/matrix-scaled.gz',
+            scaled = 'deeptools/computeMatrix/matrix-scaled.tab',
+            sortedRegions = 'deeptools/computeMatrix/genes-scaled.bed'
+        params:
+            binSize = 10,
+            regionBodyLength = 5000,
+            upstream = 2000,
+            downstream = 2000,
+            metagene = '--metagene' if config['computeMatrixScale']['exon'] else '',
+            samplesLabel = ' '.join(BOUNDS),
+            genes = config['genome']['genes'],
+            averageType = 'mean'
+        log:
+            'logs/computeMatrixScaled.log'
+        conda:
+            f'{ENVS}/deeptools.yaml'
+        threads:
+            THREADS
+        shell:
+            'computeMatrix scale-regions --scoreFileName {input} '
+            '--regionsFileName {params.genes} --outFileName {output.scaledGZ} '
+            '--outFileNameMatrix {output.scaled} --skipZeros '
+            '--regionBodyLength {params.regionBodyLength} '
+            '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
+            '--averageTypeBins {params.averageType} {params.metagene} '
+            '--upstream {params.upstream} --downstream {params.downstream} '
+            '--outFileSortedRegions {output.sortedRegions} '
+            '--numberOfProcessors {threads} &> {log}'
 
 
-rule plotProfile:
-    input:
-        'deeptools/computeMatrix/matrix-{mode}.gz'
-    output:
-        plot = 'qc/deeptools/compareInput/plotProfileInput-{mode}.png',
-        data = 'qc/deeptools/compareInput/plotProfileInput-data-{mode}.tab',
-        bed = 'qc/deeptools/compareInput/plotProfileInput-regions-{mode}.bed'
-    params:
-        dpi = 300,
-        plotsPerRow = 2,
-        averageType = 'mean',
-        referencePoint = 'TSS'
-    log:
-        'logs/plotProfile-{mode}.log'
-    conda:
-        f'{ENVS}/deeptools.yaml'
-    shell:
-        'plotProfile --matrixFile {input} --outFileName {output.plot} '
-        '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
-        '--dpi {params.dpi} --averageType {params.averageType} '
-        '--refPointLabel {params.referencePoint} '
-        '--numPlotsPerRow {params.plotsPerRow} &> {log}'
+    rule computeMatrixReference:
+        input:
+            expand('bigwig/compareInput/{sample}-Input.bigwig', sample=BOUNDS)
+        output:
+            referenceGZ = 'deeptools/computeMatrix/matrix-reference.gz',
+            reference = 'deeptools/computeMatrix/matrix-reference.tab',
+            sortedRegions = 'deeptools/computeMatrix/genes-reference.bed'
+        params:
+            binSize = 10,
+            upstream = 5000,
+            downstream = 5000,
+            samplesLabel = ' '.join(BOUNDS),
+            genes = config['genome']['genes'],
+            averageType = 'mean',
+            referencePoint = 'TSS'
+        log:
+            'logs/computeMatrix.log'
+        conda:
+            f'{ENVS}/deeptools.yaml'
+        threads:
+            THREADS
+        shell:
+            'computeMatrix reference-point --scoreFileName {input} '
+            '--regionsFileName {params.genes} --outFileName {output.referenceGZ} '
+            '--outFileNameMatrix {output.reference} --skipZeros '
+            '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
+            '--averageTypeBins {params.averageType} '
+            '--referencePoint {params.referencePoint} '
+            '--upstream {params.upstream} --downstream {params.downstream} '
+            '--outFileSortedRegions {output.sortedRegions} '
+            '--numberOfProcessors {threads} &> {log}'
 
 
-rule plotHeatmap:
-    input:
-        'deeptools/computeMatrix/matrix-{mode}.gz'
-    output:
-        plot = 'qc/deeptools/compareInput/plotHeatmapInput-{mode}.png',
-        data = 'qc/deeptools/compareInput/plotHeatmapInput-data-{mode}.tab',
-        bed = 'qc/deeptools/compareInput/plotHeatmapInput-regions-{mode}.bed'
-    params:
-        dpi = 300,
-        zMax = 3,
-        zMin = -3,
-        kmeans = 3,
-        width = max(4, len(BOUNDS) * 2),
-        colorMap = 'RdBu_r',
-        averageType = 'mean',
-        referencePoint = 'TSS',
-        interpolationMethod = 'auto'
-    log:
-        'logs/plotHeatmap-{mode}.log'
-    conda:
-        f'{ENVS}/deeptools.yaml'
-    threads:
-        THREADS
-    shell:
-        'plotHeatmap --matrixFile {input} --outFileName {output.plot} '
-        '--outFileSortedRegions {output.bed} --outFileNameMatrix {output.data} '
-        '--interpolationMethod {params.interpolationMethod} '
-        '--dpi {params.dpi} --kmeans {params.kmeans} '
-        '--zMin {params.zMin} --zMax {params.zMax} '
-        '--colorMap {params.colorMap} --refPointLabel {params.referencePoint} '
-        '--averageTypeSummaryPlot {params.averageType} '
-        '--heatmapWidth {params.width} '
-        '--refPointLabel {params.referencePoint} &> {log}'
+    rule plotProfile:
+        input:
+            'deeptools/computeMatrix/matrix-{mode}.gz'
+        output:
+            plot = 'qc/deeptools/compareInput/plotProfileInput-{mode}.png',
+            data = 'qc/deeptools/compareInput/plotProfileInput-data-{mode}.tab',
+            bed = 'qc/deeptools/compareInput/plotProfileInput-regions-{mode}.bed'
+        params:
+            dpi = 300,
+            plotsPerRow = 2,
+            averageType = 'mean',
+            referencePoint = 'TSS'
+        log:
+            'logs/plotProfile-{mode}.log'
+        conda:
+            f'{ENVS}/deeptools.yaml'
+        shell:
+            'plotProfile --matrixFile {input} --outFileName {output.plot} '
+            '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
+            '--dpi {params.dpi} --averageType {params.averageType} '
+            '--refPointLabel {params.referencePoint} '
+            '--numPlotsPerRow {params.plotsPerRow} &> {log}'
+
+
+    rule plotHeatmap:
+        input:
+            'deeptools/computeMatrix/matrix-{mode}.gz'
+        output:
+            plot = 'qc/deeptools/compareInput/plotHeatmapInput-{mode}.png',
+            data = 'qc/deeptools/compareInput/plotHeatmapInput-data-{mode}.tab',
+            bed = 'qc/deeptools/compareInput/plotHeatmapInput-regions-{mode}.bed'
+        params:
+            dpi = 300,
+            zMax = 3,
+            zMin = -3,
+            kmeans = 3,
+            width = max(4, len(BOUNDS) * 2),
+            colorMap = 'RdBu_r',
+            averageType = 'mean',
+            referencePoint = 'TSS',
+            interpolationMethod = 'auto'
+        log:
+            'logs/plotHeatmap-{mode}.log'
+        conda:
+            f'{ENVS}/deeptools.yaml'
+        threads:
+            THREADS
+        shell:
+            'plotHeatmap --matrixFile {input} --outFileName {output.plot} '
+            '--outFileSortedRegions {output.bed} --outFileNameMatrix {output.data} '
+            '--interpolationMethod {params.interpolationMethod} '
+            '--dpi {params.dpi} --kmeans {params.kmeans} '
+            '--zMin {params.zMin} --zMax {params.zMax} '
+            '--colorMap {params.colorMap} --refPointLabel {params.referencePoint} '
+            '--averageTypeSummaryPlot {params.averageType} '
+            '--heatmapWidth {params.width} '
+            '--refPointLabel {params.referencePoint} &> {log}'
 
 
 rule mergeReplicates:
@@ -919,9 +919,30 @@ rule plotHeatmapGroups:
         '--refPointLabel {params.referencePoint} &> {log}'
 
 
+def macs2Control(wc):
+    if INPUTS:
+        return rules.mergeInput.output
+    else:
+        return []
+
+def macs2Command():
+    if INPUTS:
+        return ('macs2 callpeak '
+            '--treatment {input.bound} '
+        	'--control {input.input} '
+         	'--format BAM --gsize {params.genomeSize} '
+        	'--name {wildcards.sample} '
+        	'--outdir {params.dir} &> {log}')
+    else:
+        return ('macs2 callpeak '
+            '--treatment {input.bound} '
+         	'--format BAM --gsize {params.genomeSize} '
+        	'--name {wildcards.sample} '
+        	'--outdir {params.dir} &> {log}')
+
 rule macs2:
     input:
-        input = rules.mergeInput.output,
+        input = macs2Control,
         bound = 'mapped/{sample}-bound.filtered.bam'
     output:
         summits = 'macs2/{sample}/{sample}_summits.bed',
@@ -936,12 +957,7 @@ rule macs2:
     conda:
         f'{ENVS}/macs2.yaml'
     shell:
-        'macs2 callpeak '
-          '--treatment {input.bound} '
-	      '--control {input.input} '
- 	      '--format BAM --gsize {params.genomeSize} '
-	      '--name {wildcards.sample} '
-	      '--outdir {params.dir} &> {log}'
+        macs2Command()
 
 
 rule consensusPeaks:
