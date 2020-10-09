@@ -65,19 +65,23 @@ def set_config(config, default, outer_key=''):
 
 
 
-def load_samples(samples_file):
+def load_samples(file):
 
-    samples = pd.read_table(
-        samples_file, sep = ',', dtype = {'rep' : str})
-
+    samples = pd.read_table(file, sep = ',', dtype = {'rep' : str})
     # Validate read file input with wildcard definitions
-    if not samples['group'].str.match(r'[^\/\s.-]+').all():
-        sys.exit(f'Invalid group definition in {samples_file}.')
     if not samples['rep'].str.match(r'\d+').all():
-        sys.exit(f'Invalid replicate definition in {samples_file}.')
+        sys.exit(f'Invalid replicate definition in {file}.')
     if not samples['read'].str.match(r'R[12]').all():
-        sys.exit(f'Invalid read definition in {samples_file}.')
+        sys.exit(f'Invalid read definition in {file}.')
     if not samples['type'].str.match(r'input|bound').all():
-        sys.exit(f'Invalid read definition in {samples_file}.')
+        sys.exit(
+            f'Invalid type definition in {file} - must be "input" or "bound".')
+
+    samples['single'] = samples[['group', 'rep', 'read', 'type']]
+        .apply(lambda x: '-'.join(x), axis=1)
+    samples['sample'] = (samples[['group', 'rep', 'type']]
+        .apply(lambda x: '-'.join(x), axis=1))
+
+    samples = samples.set_index(['group', 'sample', 'single'], drop=False)
 
     return samples
