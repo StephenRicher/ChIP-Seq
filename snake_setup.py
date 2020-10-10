@@ -77,8 +77,8 @@ def load_samples(file):
         sys.exit(
             f'Invalid type definition in {file} - must be "input" or "bound".')
 
-    samples['single'] = samples[['group', 'rep', 'read', 'type']]
-        .apply(lambda x: '-'.join(x), axis=1)
+    samples['single'] = (samples[['group', 'rep', 'type', 'read']]
+        .apply(lambda x: '-'.join(x), axis=1))
     samples['sample'] = (samples[['group', 'rep', 'type']]
         .apply(lambda x: '-'.join(x), axis=1))
 

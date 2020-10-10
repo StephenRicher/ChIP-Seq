@@ -25,9 +25,9 @@ default_config = {
         {'exon':         True        ,},
     'genome':
         {'build':        'genome'    ,
-         'index':        ''          ,
+         'sequence':     None        ,
+         'index':        None        ,
          'annotation':   ''          ,
-         'sequence':     ''          ,
          'genes':        ''          ,
          'blacklist':    None        ,},
     'cutadapt':
@@ -46,20 +46,24 @@ config = set_config(config, default_config)
 workdir: config['workdir']
 BUILD = config['genome']['build']
 
+if config['genome']['sequence'] is config['genome']['index']:
+    sys.exit('Either a genome sequence or bowtie2 index must be provided.')
+
 # Read path to samples in pandas
 samples = load_samples(config['data'])
 
 # Extract groups and replicates.
 GROUPS = {}
-for group in DATA['group']:
-    GROUPS[group] = list(DATA.loc[group]['rep'].unique())
+for group in samples['group']:
+    GROUPS[group] = list(samples.loc[group]['rep'].unique())
 
 # Get group-rep-type for all samples
 SAMPLES = list(samples['sample'].unique())
+
 # Get group-rep for input samples
 INPUTS = [sample[:-6] for sample in SAMPLES if sample.endswith('input')]
 # Get group-rep for bound sample
-BOUNDS = [sample[:-6] for bound in SAMPLES if sample.endswith('bound')]
+BOUNDS = [sample[:-6] for sample in SAMPLES if sample.endswith('bound')]
 # Generate list of group comparisons - this avoids self comparison
 COMPARES = [f'{i[0]}-{i[1]}' for i in itertools.combinations(list(GROUPS), 2)]
 
@@ -67,7 +71,7 @@ wildcard_constraints:
     group = '|'.join(GROUPS),
     bound = '|'.join(BOUNDS),
     sample = '|'.join(SAMPLES),
-    single = '|'.join(config['single']),
+    single = '|'.join(samples['single']),
     rep = '\d+',
     read = 'R[12]',
     type = 'input|bound',
@@ -75,7 +79,7 @@ wildcard_constraints:
 
 rule all:
     input:
-        ['qc/multiqc', f'genome/{BUILD}.fa.gz.fai',
+        ['qc/multiqc',
           expand('qc/deeptools/compare{compare}/plot{type}{compare}-{mode}.png',
             mode=['scaled', 'reference'], type=['Heatmap', 'Profile'],
             compare=['Input', 'Group'])]
@@ -83,7 +87,7 @@ rule all:
 
 rule fastQC:
     input:
-        lambda wc: samples.xs(wc.single, level=3)['path']
+        lambda wc: samples.xs(wc.single, level=2)['path']
     output:
         html = 'qc/fastqc/{single}.raw_fastqc.html',
         zip = 'qc/fastqc/unmod/{single}.raw.fastqc.zip'
@@ -110,10 +114,10 @@ rule modifyFastQC:
 
 def cutadaptOutput():
     if config['paired']:
-        return ['fastq/trimmed/{bound}-R1.trim.fastq.gz',
-                'fastq/trimmed/{bound}-R2.trim.fastq.gz']
+        return ['fastq/trimmed/{sample}-R1.trim.fastq.gz',
+                'fastq/trimmed/{sample}-R2.trim.fastq.gz']
     else:
-        return ['fastq/trimmed/{bound}.trim.fastq.gz']
+        return ['fastq/trimmed/{sample}-R1.trim.fastq.gz']
 
 
 def cutadaptCmd():
@@ -136,7 +140,7 @@ rule cutadapt:
         lambda wc: samples.xs(wc.sample, level=1)['path']
     output:
         trimmed = cutadaptOutput(),
-        qc = 'qc/cutadapt/unmod/{bound}.cutadapt.txt'
+        qc = 'qc/cutadapt/unmod/{sample}.cutadapt.txt'
     params:
         forwardAdapter = config['cutadapt']['forwardAdapter'],
         reverseAdapter = config['cutadapt']['reverseAdapter'],
@@ -146,7 +150,7 @@ rule cutadapt:
         qualityCutoff = config['cutadapt']['qualityCutoff'],
         GCcontent = config['cutadapt']['GCcontent']
     log:
-        'logs/cutadapt/{bound}.log'
+        'logs/cutadapt/{sample}.log'
     conda:
         f'{ENVS}/cutadapt.yaml'
     threads:
@@ -159,11 +163,11 @@ rule modifyCutadapt:
     input:
         rules.cutadapt.output.qc
     output:
-        'qc/cutadapt/{bound}.cutadapt.txt'
+        'qc/cutadapt/{sample}.cutadapt.txt'
     group:
         'cutadapt'
     log:
-        'logs/modifyCutadapt/{bound}.log'
+        'logs/modifyCutadapt/{sample}.log'
     conda:
         f'{ENVS}/python3.yaml'
     shell:
@@ -230,20 +234,24 @@ def bowtie2Cmd():
             '--threads {threads} > {output.sam} 2> {log}; '
             'cp {log} {output.qc}')
 
+def bowtie2Index():
+    if config['genome']['index'] is not None:
+        return config['genome']['index']
+    else:
+        return f'genome/index/{BUILD}'
 
-rule bowtie2Map:
+rule bowtie2:
     input:
         reads = rules.cutadapt.output.trimmed,
-        index = rules.bowtie2Build.output
     output:
-        sam = pipe('mapped/{bound}.sam'),
-        qc = 'qc/bowtie2/{bound}.bowtie2.txt'
+        sam = pipe('mapped/{sample}.sam'),
+        qc = 'qc/bowtie2/{sample}.bowtie2.txt'
     params:
-        index = f'genome/index/{BUILD}'
+        index = bowtie2Index()
     group:
         'map'
     log:
-        'logs/bowtie2Map/{bound}.log'
+        'logs/bowtie2/{sample}.log'
     conda:
         f'{ENVS}/bowtie2.yaml'
     threads:
@@ -254,11 +262,11 @@ rule bowtie2Map:
 
 rule fixBAM:
     input:
-        rules.hisat2.output.sam
+        rules.bowtie2.output.sam
     output:
-        pipe('mapped/{bound}.fixmate.bam')
+        pipe('mapped/{sample}.fixmate.bam')
     log:
-        'logs/fixBAM/{bound}.log'
+        'logs/fixBAM/{sample}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
@@ -269,9 +277,9 @@ rule sortBAM:
     input:
         rules.fixBAM.output
     output:
-        'mapped/{bound}.sort.bam'
+        'mapped/{sample}.sort.bam'
     log:
-        'logs/sortBAM/{bound}.log'
+        'logs/sortBAM/{sample}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
@@ -284,10 +292,10 @@ rule markdupBAM:
     input:
         rules.sortBAM.output
     output:
-        bam = 'mapped/{bound}.markdup.bam',
-        qc = 'qc/deduplicate/{bound}.txt'
+        bam = 'mapped/{sample}.markdup.bam',
+        qc = 'qc/deduplicate/{sample}.txt'
     log:
-        'logs/markdupBAM/{bound}.log'
+        'logs/markdupBAM/{sample}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
@@ -299,11 +307,11 @@ rule markdupBAM:
 
 rule indexBAM:
     input:
-        'mapped/{bound}.{stage}.bam'
+        'mapped/{sample}.{stage}.bam'
     output:
-        'mapped/{bound}.{stage}.bam.bai'
+        'mapped/{sample}.{stage}.bam.bai'
     log:
-        'logs/indexBAM/{bound}-{stage}.log'
+        'logs/indexBAM/{sample}-{stage}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
@@ -315,11 +323,11 @@ rule samtoolsStats:
     input:
         rules.markdupBAM.output.bam
     output:
-        'qc/samtools/stats/{bound}.stats.txt'
+        'qc/samtools/stats/{sample}.stats.txt'
     group:
         'samQC'
     log:
-        'logs/samtools_stats/{bound}.log'
+        'logs/samtools_stats/{sample}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
@@ -328,14 +336,14 @@ rule samtoolsStats:
 
 rule samtoolsIdxstats:
     input:
-        bam = 'mapped/{bound}.markdup.bam',
-        index = 'mapped/{bound}.markdup.bam.bai'
+        bam = 'mapped/{sample}.markdup.bam',
+        index = 'mapped/{sample}.markdup.bam.bai'
     output:
-        'qc/samtools/idxstats/{bound}.idxstats.txt'
+        'qc/samtools/idxstats/{sample}.idxstats.txt'
     group:
         'samQC'
     log:
-        'logs/samtools_idxstats/{bound}.log'
+        'logs/samtools_idxstats/{sample}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
@@ -346,11 +354,11 @@ rule samtoolsFlagstat:
     input:
         rules.markdupBAM.output.bam
     output:
-        'qc/samtools/flagstat/{bound}.flagstat.txt'
+        'qc/samtools/flagstat/{sample}.flagstat.txt'
     group:
         'samQC'
     log:
-        'logs/samtoolsFlagstat/{bound}.log'
+        'logs/samtoolsFlagstat/{sample}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     shell:
@@ -386,17 +394,17 @@ rule processBlacklist:
 rule estimateReadFiltering:
     input:
         bam = rules.markdupBAM.output.bam,
-        index = 'mapped/{bound}.markdup.bam.bai',
+        index = 'mapped/{sample}.markdup.bam.bai',
         blacklist = rules.processBlacklist.output
     output:
-        'qc/deeptools/estimateReadFiltering/{bound}.txt'
+        'qc/deeptools/estimateReadFiltering/{sample}.txt'
     params:
         minMapQ = 15,
         binSize = 10000,
         distanceBetweenBins = 0,
         properPair = '--samFlagInclude 2' if config['paired'] else '',
     log:
-        'logs/estimateReadFiltering/{bound}.log'
+        'logs/estimateReadFiltering/{sample}.log'
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
@@ -413,17 +421,17 @@ rule estimateReadFiltering:
 rule alignmentSieve:
     input:
         bam = rules.markdupBAM.output.bam,
-        index = 'mapped/{sample_type}.markdup.bam.bai',
+        index = 'mapped/{sample}.markdup.bam.bai',
         blacklist = rules.processBlacklist.output
     output:
-        bam = 'mapped/{sample_type}.filtered.bam',
-        qc = 'qc/deeptools/{sample_type}-filter-metrics.txt'
+        bam = 'mapped/{sample}.filtered.bam',
+        qc = 'qc/deeptools/{sample}-filter-metrics.txt'
     params:
         minMapQ = 15,
         maxFragmentLength = 2000,
         properPair = '--samFlagInclude 2' if config['paired'] else '',
     log:
-        'logs/alignmentSieve/{sample_type}.log'
+        'logs/alignmentSieve/{sample}.log'
     conda:
         f'{ENVS}/deeptools.yaml'
     threads:
@@ -435,21 +443,6 @@ rule alignmentSieve:
         '--maxFragmentLength {params.maxFragmentLength} '
         '--blackListFileName {input.blacklist} '
         '--numberOfProcessors {threads} --filterMetrics {output.qc} &> {log}'
-
-
-rule indexBAM:
-    input:
-        'mapped/{sample_type}.{stage}.bam'
-    output:
-        'mapped/{sample_type}.{stage}.bam.bai'
-    log:
-        'logs/indexBAM/{sample_type}-{stage}.log'
-    conda:
-        f'{ENVS}/samtools.yaml'
-    threads:
-        config['threads']
-    shell:
-        'samtools index -@ {threads} {input} &> {log}'
 
 
 rule multiBamSummary:
@@ -623,7 +616,7 @@ if INPUTS:
         output:
             'bigwig/compareInput/{bound}-Input.bigwig',
         params:
-            binSize = 10,
+            binSize = 50,
             scale = 'SES',
             extendReads = 150,
             operation = 'log2',
@@ -650,7 +643,7 @@ if INPUTS:
             scaled = 'deeptools/computeMatrix/matrix-scaled.tab',
             sortedRegions = 'deeptools/computeMatrix/genes-scaled.bed'
         params:
-            binSize = 10,
+            binSize = 50,
             regionBodyLength = 5000,
             upstream = 2000,
             downstream = 2000,
@@ -684,7 +677,7 @@ if INPUTS:
             reference = 'deeptools/computeMatrix/matrix-reference.tab',
             sortedRegions = 'deeptools/computeMatrix/genes-reference.bed'
         params:
-            binSize = 10,
+            binSize = 50,
             upstream = 5000,
             downstream = 5000,
             samplesLabel = ' '.join(BOUNDS),
@@ -806,7 +799,7 @@ rule bamCompareGroups:
     output:
         'bigwig/compareGroup/{group1}-{group2}.bigwig',
     params:
-        binSize = 10,
+        binSize = 50,
         scale = 'SES',
         extendReads = 150,
         operation = 'log2',
@@ -833,7 +826,7 @@ rule computeMatrixScaledGroups:
         scaled = 'deeptools/computeMatrixGroups/matrix-scaled.tab',
         sortedRegions = 'deeptools/computeMatrixGroups/genes-scaled.bed'
     params:
-        binSize = 10,
+        binSize = 50,
         regionBodyLength = 5000,
         upstream = 2000,
         downstream = 2000,
@@ -867,7 +860,7 @@ rule computeMatrixReferenceGroups:
         reference = 'deeptools/computeMatrixGroups/matrix-reference.tab',
         sortedRegions = 'deeptools/computeMatrixGroups/genes-reference.bed'
     params:
-        binSize = 10,
+        binSize = 50,
         upstream = 5000,
         downstream = 5000,
         samplesLabel = ' '.join(COMPARES),
@@ -962,13 +955,13 @@ def macs2Command():
             '--treatment {input.bound} '
         	'--control {input.input} '
          	'--format BAM --gsize {params.genomeSize} '
-        	'--name {wildcards.sample} '
+        	'--name {wildcards.bound} '
         	'--outdir {params.dir} &> {log}')
     else:
         return ('macs2 callpeak '
             '--treatment {input.bound} '
          	'--format BAM --gsize {params.genomeSize} '
-        	'--name {wildcards.sample} '
+        	'--name {wildcards.bound} '
         	'--outdir {params.dir} &> {log}')
 
 rule macs2:
@@ -1060,12 +1053,11 @@ rule multiQC:
         expand('qc/fastqc/{single}.raw_fastqc.zip', single= samples['single']),
         expand('qc/fastq_screen/{single}.fastq_screen.txt',
             single=samples['single']) if config['fastq_screen'] else [],
-        expand('qc/cutadapt/{single}.cutadapt.txt', single=samples['single']),
+        expand('qc/cutadapt/{sample}.cutadapt.txt', sample=SAMPLES),
         expand('qc/fastqc/{single}.trim_fastqc.zip', single=samples['single']),
-        expand('qc/bowtie2/{sample}.bowtie2.txt', sample=SAMPLESs),
-        expand('macs2/{bound}/{bound}_peaks.xls', sample=BOUNDS),
-        expand('qc/deeptools/estimateReadFiltering/{sample}.txt',
-            sample=SAMPLES_),
+        expand('qc/bowtie2/{sample}.bowtie2.txt', sample=SAMPLES),
+        expand('macs2/{bound}/{bound}_peaks.xls', bound=BOUNDS),
+        #expand('qc/deeptools/estimateReadFiltering/{sample}.txt', sample=SAMPLES),
         'qc/deeptools/plotCorrelation.tsv',
         'qc/deeptools/plotPCA.tab',
         'qc/deeptools/plotCoverage.info',
