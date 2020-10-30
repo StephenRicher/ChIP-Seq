@@ -27,6 +27,7 @@ default_config = {
         {'build':        'genome'    ,
          'sequence':     None        ,
          'index':        None        ,
+         'region':       None        ,
          'annotation':   ''          ,
          'genes':        ''          ,
          'blacklist':    None        ,},
@@ -38,6 +39,11 @@ default_config = {
          'minimumLength':   0                                 ,
          'qualityCutoff':  '0,0'                              ,
          'GCcontent':       50                                ,},
+    'deduplicate':          True   ,
+    'bigwig':
+        {'binsize':         10   ,},
+    'macs2':
+        {'nomodel':         False,},
     'fastq_screen':      None,
 }
 
@@ -46,16 +52,20 @@ config = set_config(config, default_config)
 workdir: config['workdir']
 BUILD = config['genome']['build']
 
-if config['genome']['sequence'] is config['genome']['index']:
-    sys.exit('Either a genome sequence or bowtie2 index must be provided.')
+if config['genome']['sequence'] is None:
+    config['genome']['sequence'] = ''
+    if config['genome']['index'] is None:
+        sys.exit('Either a genome sequence or bowtie2 index must be provided.')
 
 # Read path to samples in pandas
 samples = load_samples(config['data'])
 
 # Extract groups and replicates.
 GROUPS = {}
+# Only add group-replicates of bound samples
+boundOnly = samples[samples.type=='bound']
 for group in samples['group']:
-    GROUPS[group] = list(samples.loc[group]['rep'].unique())
+    GROUPS[group] = list(boundOnly.loc[group]['rep'].unique())
 
 # Get group-rep-type for all samples
 SAMPLES = list(samples['sample'].unique())
@@ -77,12 +87,17 @@ wildcard_constraints:
     type = 'input|bound',
     stage = 'markdup|filtered'
 
+
 rule all:
     input:
-        ['qc/multiqc',
+        ['qc/multiqc', 'macs2/consensus/all-consensus_peaks.narrowPeak',
           expand('qc/deeptools/compare{compare}/plot{type}{compare}-{mode}.png',
             mode=['scaled', 'reference'], type=['Heatmap', 'Profile'],
-            compare=['Input', 'Group'])]
+            compare=['Input', 'Group']),
+         expand('bigwig/{sample}.filtered.bigwig', sample=SAMPLES),
+         expand('bigwig/{group}-bound.filtered.bigwig', group=GROUPS.keys()),
+         expand('qc/deeptools/MACS2peaks/macs2consensus-{mode}.png',
+            mode=['profile', 'heatmap'])]
 
 
 rule fastQC:
@@ -294,6 +309,8 @@ rule markdupBAM:
     output:
         bam = 'mapped/{sample}.markdup.bam',
         qc = 'qc/deduplicate/{sample}.txt'
+    params:
+        dedup = '-r' if config['deduplicate'] else ''
     log:
         'logs/markdupBAM/{sample}.log'
     conda:
@@ -302,7 +319,7 @@ rule markdupBAM:
         config['threads']
     shell:
         'samtools markdup -@ {threads} '
-        '-sf {output.qc} {input} {output.bam} &> {log}'
+        '-sf {output.qc} {pramams.re}{input} {output.bam} &> {log}'
 
 
 rule indexBAM:
@@ -443,6 +460,33 @@ rule alignmentSieve:
         '--maxFragmentLength {params.maxFragmentLength} '
         '--blackListFileName {input.blacklist} '
         '--numberOfProcessors {threads} --filterMetrics {output.qc} &> {log}'
+
+
+def getBigwigRegions():
+    if config['genome']['region']:
+        return f"--region {config['genome']['region']}"
+    else:
+        return ""
+
+rule bamCoverage:
+    input:
+        bam  = 'mapped/{all}.filtered.bam',
+        index  = 'mapped/{all}.filtered.bam.bai'
+    output:
+        'bigwig/{all}.filtered.bigwig'
+    params:
+        binSize = config['bigwig']['binsize'],
+        region = getBigwigRegions()
+    log:
+        'logs/bamCoverage/{all}.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        config['threads']
+    shell:
+        'bamCoverage --bam {input.bam} --outFileName {output} '
+        '--binSize {params.binSize} {params.region} '
+        '--numberOfProcessors {threads} &> {log}'
 
 
 rule multiBamSummary:
@@ -616,11 +660,12 @@ if INPUTS:
         output:
             'bigwig/compareInput/{bound}-Input.bigwig',
         params:
-            binSize = 50,
+            binSize = 100,
             scale = 'SES',
             extendReads = 150,
             operation = 'log2',
             genomeSize = 2652783500,
+            region = getBigwigRegions()
         log:
             'logs/bamCompare/{bound}.log'
         conda:
@@ -631,7 +676,7 @@ if INPUTS:
             'bamCompare --bamfile1 {input.treatment} --bamfile2 {input.control} '
             '--outFileName {output} --binSize {params.binSize} '
             '--extendReads {params.extendReads} --operation {params.operation} '
-            '--effectiveGenomeSize {params.genomeSize} '
+            '--effectiveGenomeSize {params.genomeSize} {params.region} '
             '--numberOfProcessors {threads} &> {log}'
 
 
@@ -643,7 +688,7 @@ if INPUTS:
             scaled = 'deeptools/computeMatrix/matrix-scaled.tab',
             sortedRegions = 'deeptools/computeMatrix/genes-scaled.bed'
         params:
-            binSize = 50,
+            binSize = 100,
             regionBodyLength = 5000,
             upstream = 2000,
             downstream = 2000,
@@ -677,7 +722,7 @@ if INPUTS:
             reference = 'deeptools/computeMatrix/matrix-reference.tab',
             sortedRegions = 'deeptools/computeMatrix/genes-reference.bed'
         params:
-            binSize = 50,
+            binSize = 100,
             upstream = 5000,
             downstream = 5000,
             samplesLabel = ' '.join(BOUNDS),
@@ -738,7 +783,7 @@ if INPUTS:
             zMax = 3,
             zMin = -3,
             kmeans = 3,
-            width = max(4, len(BOUNDS) * 2),
+            width = max(4, min(len(BOUNDS) * 2, 16)),
             colorMap = 'RdBu_r',
             averageType = 'mean',
             referencePoint = 'TSS',
@@ -799,11 +844,12 @@ rule bamCompareGroups:
     output:
         'bigwig/compareGroup/{group1}-{group2}.bigwig',
     params:
-        binSize = 50,
+        binSize = 100,
         scale = 'SES',
         extendReads = 150,
         operation = 'log2',
         genomeSize = 2652783500,
+        regions = getBigwigRegions()
     log:
         'logs/bamCompareGroups/{group1}-{group2}.log'
     conda:
@@ -814,7 +860,7 @@ rule bamCompareGroups:
         'bamCompare --bamfile1 {input.group1} --bamfile2 {input.group2} '
         '--outFileName {output} --binSize {params.binSize} '
         '--extendReads {params.extendReads} --operation {params.operation} '
-        '--effectiveGenomeSize {params.genomeSize} '
+        '--effectiveGenomeSize {params.genomeSize} {params.regions} '
         '--numberOfProcessors {threads} &> {log}'
 
 
@@ -826,7 +872,7 @@ rule computeMatrixScaledGroups:
         scaled = 'deeptools/computeMatrixGroups/matrix-scaled.tab',
         sortedRegions = 'deeptools/computeMatrixGroups/genes-scaled.bed'
     params:
-        binSize = 50,
+        binSize = 100,
         regionBodyLength = 5000,
         upstream = 2000,
         downstream = 2000,
@@ -860,7 +906,7 @@ rule computeMatrixReferenceGroups:
         reference = 'deeptools/computeMatrixGroups/matrix-reference.tab',
         sortedRegions = 'deeptools/computeMatrixGroups/genes-reference.bed'
     params:
-        binSize = 50,
+        binSize = 100,
         upstream = 5000,
         downstream = 5000,
         samplesLabel = ' '.join(COMPARES),
@@ -949,20 +995,20 @@ def macs2Control(wc):
     else:
         return []
 
+
 def macs2Command():
+    command = ('macs2 callpeak '
+        '--treatment {input.bound} '
+        '--format BAM --gsize {params.genomeSize} '
+        '--name {wildcards.bound} ')
     if INPUTS:
-        return ('macs2 callpeak '
-            '--treatment {input.bound} '
-        	'--control {input.input} '
-         	'--format BAM --gsize {params.genomeSize} '
-        	'--name {wildcards.bound} '
-        	'--outdir {params.dir} &> {log}')
-    else:
-        return ('macs2 callpeak '
-            '--treatment {input.bound} '
-         	'--format BAM --gsize {params.genomeSize} '
-        	'--name {wildcards.bound} '
-        	'--outdir {params.dir} &> {log}')
+        command += '--control {input.input} '
+    if config['macs2']['nomodel']:
+        command += '--nomodel '
+    command += '--outdir {params.dir} &> {log}'
+
+    return command
+
 
 rule macs2:
     input:
@@ -972,7 +1018,7 @@ rule macs2:
         summits = 'macs2/{bound}/{bound}_summits.bed',
         narrowPeak = 'macs2/{bound}/{bound}_peaks.narrowPeak',
         xlsPeak = 'macs2/{bound}/{bound}_peaks.xls',
-        model = 'macs2/{bound}/{bound}_model.r'
+        #model = 'macs2/{bound}/{bound}_model.r'
     params:
         dir = directory('macs2/{bound}'),
         genomeSize = 2652783500
@@ -1016,6 +1062,98 @@ rule intersectConsensus:
         f'{ENVS}/bedtools.yaml'
     shell:
         'bedtools multiinter -i {input} > {output} 2> {log}'
+
+
+rule computeMatrixMACS2:
+    input:
+        bigwig = expand('bigwig/compareInput/{bound}-Input.bigwig', bound=BOUNDS),
+        macs2consensus = rules.intersectConsensus.output
+    output:
+        referenceGZ = 'deeptools/computeMatrix/macs2consensus-reference.gz',
+        reference = 'deeptools/computeMatrix/macs2consensus-reference.tab',
+        sortedRegions = 'deeptools/computeMatrix/macs2consensus-reference.bed'
+    params:
+        binSize = 10,
+        upstream = 1000,
+        downstream = 1000,
+        samplesLabel = ' '.join(BOUNDS),
+        averageType = 'mean',
+        referencePoint = 'center'
+    log:
+        'logs/computeMatrixMACS2.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        config['threads']
+    shell:
+        'computeMatrix reference-point --scoreFileName {input.bigwig} '
+        '--regionsFileName {input.macs2consensus} --outFileName {output.referenceGZ} '
+        '--outFileNameMatrix {output.reference} --skipZeros '
+        '--samplesLabel {params.samplesLabel} --binSize {params.binSize} '
+        '--averageTypeBins {params.averageType} '
+        '--referencePoint {params.referencePoint} '
+        '--upstream {params.upstream} --downstream {params.downstream} '
+        '--outFileSortedRegions {output.sortedRegions} '
+        '--numberOfProcessors {threads} &> {log}'
+
+
+rule plotProfileMACS2:
+    input:
+        rules.computeMatrixMACS2.output.referenceGZ
+    output:
+        plot = 'qc/deeptools/MACS2peaks/macs2consensus-profile.png',
+        data = 'qc/deeptools/MACS2peaks/macs2consensus-profileData.tab',
+        bed = 'qc/deeptools/MACS2peaks/macs2consensus-profileRegions.bed'
+    params:
+        dpi = 300,
+        plotsPerRow = 2,
+        averageType = 'mean',
+        referencePoint = 'center'
+    log:
+        'logs/plotProfileMACS2.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    shell:
+        'plotProfile --matrixFile {input} --outFileName {output.plot} '
+        '--outFileSortedRegions {output.bed} --outFileNameData {output.data} '
+        '--dpi {params.dpi} --averageType {params.averageType} '
+        '--refPointLabel {params.referencePoint} '
+        '--numPlotsPerRow {params.plotsPerRow} &> {log}'
+
+
+rule plotHeatmapMACS2:
+    input:
+        rules.computeMatrixMACS2.output.referenceGZ
+    output:
+        plot = 'qc/deeptools/MACS2peaks/macs2consensus-heatmap.png',
+        data = 'qc/deeptools/MACS2peaks/macs2consensus-heatmapData.tab',
+        bed = 'qc/deeptools/MACS2peaks/macs2consensus-heatmapRegions.bed'
+    params:
+        dpi = 300,
+        zMax = 3,
+        zMin = -3,
+        kmeans = 3,
+        width = max(4, min(len(BOUNDS) * 2, 16)),
+        colorMap = 'RdBu_r',
+        averageType = 'mean',
+        referencePoint = 'center',
+        interpolationMethod = 'auto'
+    log:
+        'logs/plotHeatmapMACS2.log'
+    conda:
+        f'{ENVS}/deeptools.yaml'
+    threads:
+        config['threads']
+    shell:
+        'plotHeatmap --matrixFile {input} --outFileName {output.plot} '
+        '--outFileSortedRegions {output.bed} --outFileNameMatrix {output.data} '
+        '--interpolationMethod {params.interpolationMethod} '
+        '--dpi {params.dpi} --kmeans {params.kmeans} '
+        '--zMin {params.zMin} --zMax {params.zMax} '
+        '--colorMap {params.colorMap} --refPointLabel {params.referencePoint} '
+        '--averageTypeSummaryPlot {params.averageType} '
+        '--heatmapWidth {params.width} '
+        '--refPointLabel {params.referencePoint} &> {log}'
 
 
 rule plotEnrichment:
