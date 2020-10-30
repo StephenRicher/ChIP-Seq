@@ -752,7 +752,7 @@ if INPUTS:
             'deeptools/computeMatrix/matrix-{mode}.gz'
         output:
             plot = 'qc/deeptools/compareInput/plotProfileInput-{mode}.png',
-            data = 'qc/deeptools/compareInput/plotProfileInput-data-{mode}.tab',
+            data = 'qc/deeptools/compareInput/plotProfileInput-{mode}.tab',
             bed = 'qc/deeptools/compareInput/plotProfileInput-regions-{mode}.bed'
         params:
             dpi = 300,
@@ -776,7 +776,7 @@ if INPUTS:
             'deeptools/computeMatrix/matrix-{mode}.gz'
         output:
             plot = 'qc/deeptools/compareInput/plotHeatmapInput-{mode}.png',
-            data = 'qc/deeptools/compareInput/plotHeatmapInput-data-{mode}.tab',
+            data = 'qc/deeptools/compareInput/plotHeatmapInput-{mode}.tab',
             bed = 'qc/deeptools/compareInput/plotHeatmapInput-regions-{mode}.bed'
         params:
             dpi = 300,
@@ -935,7 +935,7 @@ rule plotProfileGroups:
         'deeptools/computeMatrixGroups/matrix-{mode}.gz'
     output:
         plot = 'qc/deeptools/compareGroup/plotProfileGroup-{mode}.png',
-        data = 'qc/deeptools/compareGroup/plotProfileGroup-data-{mode}.tab',
+        data = 'qc/deeptools/compareGroup/plotProfileGroup-{mode}.tab',
         bed = 'qc/deeptools/compareGroup/plotProfileGroup-regions-{mode}.bed'
     params:
         dpi = 300,
@@ -959,7 +959,7 @@ rule plotHeatmapGroups:
         'deeptools/computeMatrixGroups/matrix-{mode}.gz'
     output:
         plot = 'qc/deeptools/compareGroup/plotHeatmapGroup-{mode}.png',
-        data = 'qc/deeptools/compareGroup/plotHeatmapGroup-data-{mode}.tab',
+        data = 'qc/deeptools/compareGroup/plotHeatmapGroup-{mode}.tab',
         bed = 'qc/deeptools/compareGroup/plotHeatmapGroup-regions-{mode}.bed'
     params:
         dpi = 300,
@@ -1202,8 +1202,8 @@ rule multiQC:
         'qc/deeptools/plotCoverage.tab',
         'qc/deeptools/plotFingerprint.png',
         'qc/deeptools/plotFingerprint.tab',
-        'qc/deeptools/compareInput/plotProfileInput-data-scaled.tab',
-        'qc/deeptools/compareGroup/plotProfileGroup-data-scaled.tab',
+        'qc/deeptools/compareInput/plotProfileInput-scaled.tab',
+        'qc/deeptools/compareGroup/plotProfileGroup-scaled.tab',
         'qc/deeptools/plotEnrichment.tab',
         expand('qc/samtools/stats/{sample}.stats.txt', sample=SAMPLES),
         expand('qc/samtools/idxstats/{sample}.idxstats.txt', sample=SAMPLES),
