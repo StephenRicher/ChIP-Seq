@@ -280,6 +280,8 @@ rule fixBAM:
         rules.bowtie2.output.sam
     output:
         pipe('mapped/{sample}.fixmate.bam')
+    group:
+        'map'
     log:
         'logs/fixBAM/{sample}.log'
     conda:
@@ -293,6 +295,8 @@ rule sortBAM:
         rules.fixBAM.output
     output:
         'mapped/{sample}.sort.bam'
+    group:
+        'map'
     log:
         'logs/sortBAM/{sample}.log'
     conda:
@@ -311,6 +315,8 @@ rule markdupBAM:
         qc = 'qc/deduplicate/{sample}.txt'
     params:
         dedup = '-r' if config['deduplicate'] else ''
+    group:
+        'map'
     log:
         'logs/markdupBAM/{sample}.log'
     conda:
@@ -327,6 +333,8 @@ rule indexBAM:
         'mapped/{sample}.{stage}.bam'
     output:
         'mapped/{sample}.{stage}.bam.bai'
+    group:
+        'map'
     log:
         'logs/indexBAM/{sample}-{stage}.log'
     conda:
