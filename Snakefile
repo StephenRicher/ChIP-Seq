@@ -484,7 +484,8 @@ rule bamCoverage:
         'bigwig/{all}.filtered.bigwig'
     params:
         binSize = config['bigwig']['binsize'],
-        region = getBigwigRegions()
+        region = getBigwigRegions(),
+        normalise = 'RPKM'
     log:
         'logs/bamCoverage/{all}.log'
     conda:
@@ -493,6 +494,7 @@ rule bamCoverage:
         config['threads']
     shell:
         'bamCoverage --bam {input.bam} --outFileName {output} '
+        '--normalizeUsing {params.normalise} '
         '--binSize {params.binSize} {params.region} '
         '--numberOfProcessors {threads} &> {log}'
 
