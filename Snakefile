@@ -241,8 +241,8 @@ rule bowtie2Build:
 
 def bowtie2Cmd():
     if config['paired']:
-        return ('bowtie2 -x {params.index} -1 {input.reads_in[0]} '
-            '-2 {input.reads_in[1]} --threads {threads} '
+        return ('bowtie2 -x {params.index} -1 {input.reads[0]} '
+            '-2 {input.reads[1]} --threads {threads} '
             '> {output.sam} 2> {log}; cp {log} {output.qc}')
     else:
         return ('bowtie2 -x {params.index} -U {input.reads[0]} '
