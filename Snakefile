@@ -325,7 +325,7 @@ rule markdupBAM:
         config['threads']
     shell:
         'samtools markdup -@ {threads} '
-        '-sf {output.qc} {pramams.re}{input} {output.bam} &> {log}'
+        '-sf {output.qc} {params.dedup} {input} {output.bam} &> {log}'
 
 
 rule indexBAM:
