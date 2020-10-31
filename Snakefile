@@ -31,7 +31,10 @@ default_config = {
          'annotation':   ''          ,
          'genes':        ''          ,
          'blacklist':    None        ,},
-    'cutadapt':
+    'bowtie2' :
+        {'maxIn'         500,
+         'minIn'         0  ,},
+    'cutadapt' :
         {'forwardAdapter': 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCA',
          'reverseAdapter': 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT',
          'overlap':         3                                 ,
@@ -244,6 +247,7 @@ def bowtie2Cmd():
     if config['paired']:
         return ('bowtie2 -x {params.index} -1 {input.reads[0]} '
             '-2 {input.reads[1]} --threads {threads} '
+            '--minins {params.minIn} --maxins {params.maxIn} '
             '> {output.sam} 2> {log}; cp {log} {output.qc}')
     else:
         return ('bowtie2 -x {params.index} -U {input.reads[0]} '
@@ -263,7 +267,9 @@ rule bowtie2:
         sam = pipe('mapped/{sample}.sam'),
         qc = 'qc/bowtie2/{sample}.bowtie2.txt'
     params:
-        index = bowtie2Index()
+        index = bowtie2Index(),
+        minIn = config['bowtie2']['minIn'],
+        maxIn = config['bowtie2']['maxIn']
     group:
         'map'
     log:
