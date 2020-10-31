@@ -40,8 +40,9 @@ default_config = {
          'qualityCutoff':  '0,0'                              ,
          'GCcontent':       50                                ,},
     'deduplicate':          True   ,
-    'bigwig':
-        {'binsize':         10   ,},
+    'coverage':
+        {'binsize':         10      ,
+         'format' :         'bigwig',},
     'macs2':
         {'nomodel':         False,},
     'fastq_screen':      None,
@@ -270,7 +271,7 @@ rule bowtie2:
     conda:
         f'{ENVS}/bowtie2.yaml'
     threads:
-        min(1, (config['threads'] / 2) - 1)
+        config['threads']  - 1
     shell:
         bowtie2Cmd()
 
@@ -279,7 +280,7 @@ rule fixBAM:
     input:
         rules.bowtie2.output.sam
     output:
-        pipe('mapped/{sample}.fixmate.bam')
+        'mapped/{sample}.fixmate.bam'
     group:
         'map'
     log:
@@ -294,17 +295,17 @@ rule sortBAM:
     input:
         rules.fixBAM.output
     output:
-        'mapped/{sample}.sort.bam'
+        pipe('mapped/{sample}.sort.bam')
     group:
-        'map'
+        'markDup'
     log:
         'logs/sortBAM/{sample}.log'
     conda:
         f'{ENVS}/samtools.yaml'
     threads:
-        min(1, (config['threads'] / 2) - 1)
+        config['threads'] - 1
     shell:
-        'samtools sort -@ {threads} {input} > {output} 2> {log}'
+        'samtools sort -@ {threads} -O bam,level=0 {input} > {output} 2> {log}'
 
 
 rule markdupBAM:
@@ -316,13 +317,11 @@ rule markdupBAM:
     params:
         dedup = '-r' if config['deduplicate'] else ''
     group:
-        'map'
+        'markDup'
     log:
         'logs/markdupBAM/{sample}.log'
     conda:
         f'{ENVS}/samtools.yaml'
-    threads:
-        config['threads']
     shell:
         'samtools markdup -@ {threads} '
         '-sf {output.qc} {params.dedup} {input} {output.bam} &> {log}'
@@ -333,8 +332,6 @@ rule indexBAM:
         'mapped/{sample}.{stage}.bam'
     output:
         'mapped/{sample}.{stage}.bam.bai'
-    group:
-        'map'
     log:
         'logs/indexBAM/{sample}-{stage}.log'
     conda:
@@ -483,9 +480,10 @@ rule bamCoverage:
     output:
         'bigwig/{all}.filtered.bigwig'
     params:
-        binSize = config['bigwig']['binsize'],
+        binSize = config['coverage']['binsize'],
         region = getBigwigRegions(),
-        normalise = 'RPKM'
+        normalise = 'RPKM',
+        format = config['coverage']['format']
     log:
         'logs/bamCoverage/{all}.log'
     conda:
@@ -495,6 +493,7 @@ rule bamCoverage:
     shell:
         'bamCoverage --bam {input.bam} --outFileName {output} '
         '--normalizeUsing {params.normalise} '
+        '--outFileFormat {params.format} '
         '--binSize {params.binSize} {params.region} '
         '--numberOfProcessors {threads} &> {log}'
 
